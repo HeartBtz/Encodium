@@ -255,6 +255,13 @@ body {
 .progress-fill { height: 100%; border-radius: 8px; transition: width .3s ease; width: 0%; background: linear-gradient(90deg, var(--a-accent), var(--a-accent-h)); }
 .progress-wrap span { font-size: 11.5px; color: var(--a-text-muted); }
 
+/* ── Paths Info ──────────────────────────────────────────── */
+.paths-info { padding: 4px 0; }
+.path-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--a-border); }
+.path-row:last-child { border-bottom: none; }
+.path-label { font-size: 13px; font-weight: 600; color: var(--a-text-muted); min-width: 90px; }
+.path-row code { font-size: 13px; color: var(--a-text); background: var(--a-surface2); padding: 3px 8px; border-radius: 4px; word-break: break-all; }
+
 /* ── Codec Stats ────────────────────────────────────────── */
 .codec-stats-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

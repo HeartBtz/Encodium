@@ -194,7 +194,15 @@ router.get('/stats', requireAuth, async (req, res) => {
               SUM(status='cancelled') as cancelled
        FROM encode_jobs`
     );
-    res.json({ videos: vStats, jobs: jStats });
+    res.json({
+      videos: vStats,
+      jobs: jStats,
+      paths: {
+        media: scanner.MEDIA_DIR,
+        thumbs: scanner.THUMB_DIR,
+        encode: process.env.ENCODE_DIR || path.join(__dirname, '..', 'data', 'encoded'),
+      },
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

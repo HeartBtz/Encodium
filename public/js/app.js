@@ -187,6 +187,13 @@
       const jobTxt = jb ? `${jb.total || 0} (${jb.encoding || 0} en cours)` : '0';
       $('#stat-jobs').textContent = jobTxt;
 
+      // Paths
+      if (stats.paths) {
+        $('#path-media').textContent = stats.paths.media || '—';
+        $('#path-thumbs').textContent = stats.paths.thumbs || '—';
+        $('#path-encode').textContent = stats.paths.encode || '—';
+      }
+
       // Codec chart
       const grid = $('#codec-chart');
       if (codecs && codecs.length) {
