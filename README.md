@@ -29,16 +29,38 @@
 git clone git@github.com:HeartBtz/Encodium.git
 cd encodium
 
-# Run the install script (installs deps, sets up DB, creates .env and admin account)
+# Run the install script (installs deps, sets up DB, creates .env, admin account, starts via PM2 + systemd)
 bash install.sh
-
-# Start the server
-node server.js
 ```
 
-Open **http://localhost:3001** and log in with:
+Open **http://localhost:4000** and log in with:
 - Email: `admin@encodium.local`
 - Password: `admin`
+
+## Process Management
+
+The installer automatically configures **both** PM2 and systemd:
+
+### PM2 (preferred for development & easy management)
+```bash
+pm2 status              # List processes
+pm2 logs encodium       # Live logs
+pm2 restart encodium    # Restart
+pm2 stop encodium       # Stop
+pm2 delete encodium     # Remove from PM2
+```
+
+PM2 is configured to auto-start on boot via `pm2 startup` + `pm2 save`.
+
+### Systemd (production, server-grade)
+```bash
+sudo systemctl status encodium     # Status
+sudo systemctl restart encodium    # Restart
+sudo systemctl stop encodium       # Stop
+journalctl -u encodium -f          # Live logs
+```
+
+> **Note:** By default the installer starts Encodium via PM2. To use systemd instead, stop PM2 (`pm2 stop encodium`) and start the service (`sudo systemctl start encodium`).
 
 ## Manual Setup
 
@@ -69,7 +91,7 @@ node server.js
 | `DB_PASS` | — | Database password |
 | `DB_NAME` | `encodium` | Database name |
 | `JWT_SECRET` | — | Secret for JWT token signing |
-| `PORT` | `3001` | HTTP server port |
+| `PORT` | `4000` | HTTP server port |
 | `MEDIA_DIR` | — | Path to your video library to scan |
 | `ENCODE_DIR` | `./data/encoded` | Output directory for encoded files |
 | `MAX_WORKERS` | `2` | Concurrent encoding workers |

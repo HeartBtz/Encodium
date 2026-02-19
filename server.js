@@ -15,7 +15,7 @@ const db      = require('./db');
 const encoder = require('./services/encoder');
 const api     = require('./routes/api');
 
-const PORT = parseInt(process.env.PORT || '3001', 10);
+const PORT = parseInt(process.env.PORT || '4000', 10);
 const app  = express();
 
 /* ─── Security & middleware ───────────────────────────────── */

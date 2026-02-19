@@ -3,10 +3,15 @@ set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════════
 # Encodium — Installation script
+# Installs deps, sets up DB, creates .env, admin account,
+# then runs the app via PM2 (preferred) or systemd service.
 # ═══════════════════════════════════════════════════════════════
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+
+APP_PORT=4000
+APP_NAME="encodium"
 
 NC='\033[0m'; BOLD='\033[1m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; RED='\033[0;31m'; YELLOW='\033[0;33m'
 
@@ -33,9 +38,7 @@ install_node() {
   fi
 
   if command -v node &>/dev/null; then
-    local ver
-    ver=$(node -v)
-    ok "Node.js $ver already installed"
+    ok "Node.js $(node -v) already installed"
   else
     log "Installing nvm + Node.js 20 LTS…"
     curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
@@ -46,6 +49,10 @@ install_node() {
     nvm use default
     ok "Node.js $(node -v) installed"
   fi
+
+  # Resolve absolute node path for systemd
+  NODE_BIN="$(command -v node)"
+  NPM_BIN="$(command -v npm)"
 }
 
 # ─── MariaDB ───────────────────────────────────────────────
@@ -122,6 +129,8 @@ setup_database() {
     ROOT_ARGS=(sudo $MYSQL_CMD)
   elif $MYSQL_CMD -u root -e "SELECT 1" &>/dev/null; then
     ROOT_ARGS=($MYSQL_CMD -u root)
+  elif [[ -n "${MYSQL_ROOT_PASS:-}" ]]; then
+    ROOT_ARGS=($MYSQL_CMD -u root -p"$MYSQL_ROOT_PASS")
   else
     warn "Cannot access MariaDB as root. Please create the database manually:"
     echo "  CREATE DATABASE IF NOT EXISTS $DB_NAME;"
@@ -169,7 +178,7 @@ DB_PASS=${SETUP_DB_PASS:-changeme}
 DB_NAME=${SETUP_DB_NAME:-encodium}
 
 JWT_SECRET=$JWT_SECRET
-PORT=3001
+PORT=$APP_PORT
 
 # Directories
 MEDIA_DIR=$MEDIA_DIR
@@ -199,14 +208,8 @@ create_admin() {
 
   node -e "
     const bcrypt = require('bcryptjs');
-    const mysql  = require('mysql2/promise');
+    const db = require('./db');
     (async () => {
-      const pool = mysql.createPool({
-        host: process.env.DB_HOST, port: process.env.DB_PORT,
-        user: process.env.DB_USER, password: process.env.DB_PASS,
-        database: process.env.DB_NAME,
-      });
-      const db = require('./db');
       await db.initSchema();
       const email = process.env.ADMIN_EMAIL || 'admin@encodium.local';
       const pass  = process.env.ADMIN_PASS  || 'admin';
@@ -227,6 +230,115 @@ create_dirs() {
   ok "Data directories created"
 }
 
+# ─── PM2 setup ─────────────────────────────────────────────
+setup_pm2() {
+  log "Setting up PM2 process manager…"
+
+  # Install PM2 globally if not present
+  if ! command -v pm2 &>/dev/null; then
+    log "Installing PM2…"
+    npm install -g pm2 2>&1 | tail -2
+  fi
+
+  # Stop previous instance if running
+  pm2 delete "$APP_NAME" 2>/dev/null || true
+
+  # Generate ecosystem config
+  cat > "$SCRIPT_DIR/ecosystem.config.js" <<EOF
+module.exports = {
+  apps: [{
+    name: '$APP_NAME',
+    script: '$SCRIPT_DIR/server.js',
+    cwd: '$SCRIPT_DIR',
+    env_file: '$SCRIPT_DIR/.env',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '512M',
+    env: {
+      NODE_ENV: 'production',
+    },
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    error_file: '$SCRIPT_DIR/data/logs/error.log',
+    out_file: '$SCRIPT_DIR/data/logs/out.log',
+    merge_logs: true,
+  }],
+};
+EOF
+  mkdir -p "$SCRIPT_DIR/data/logs"
+
+  # Start with PM2
+  pm2 start "$SCRIPT_DIR/ecosystem.config.js"
+
+  # Save PM2 process list so it survives reboot
+  pm2 save
+
+  # Setup PM2 startup (auto-start on boot)
+  # pm2 startup generates the command you need to run as root
+  local STARTUP_CMD
+  STARTUP_CMD=$(pm2 startup 2>/dev/null | grep "sudo" | head -1) || true
+  if [[ -n "$STARTUP_CMD" ]]; then
+    log "Running PM2 startup hook…"
+    eval "$STARTUP_CMD" 2>/dev/null || warn "PM2 startup hook failed — run 'pm2 startup' manually"
+  fi
+
+  ok "PM2: Encodium is running (pm2 status / pm2 logs $APP_NAME)"
+}
+
+# ─── Systemd service (fallback / additional) ──────────────
+setup_systemd() {
+  # Only attempt if systemctl is available
+  if ! command -v systemctl &>/dev/null; then
+    warn "systemctl not found — skipping systemd service"
+    return 0
+  fi
+
+  log "Creating systemd service…"
+
+  local SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
+  local RUN_USER
+  RUN_USER="$(whoami)"
+
+  sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=Encodium — Video Encoding Platform
+Documentation=https://github.com/HeartBtz/Encodium
+After=network.target mariadb.service mysql.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=$RUN_USER
+Group=$RUN_USER
+WorkingDirectory=$SCRIPT_DIR
+EnvironmentFile=$SCRIPT_DIR/.env
+ExecStart=$NODE_BIN $SCRIPT_DIR/server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=$APP_NAME
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=$SCRIPT_DIR/data
+PrivateTmp=true
+
+# Allow GPU access for hardware encoding
+SupplementaryGroups=video render
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable "$APP_NAME"
+  ok "Systemd: service '$APP_NAME' created and enabled"
+  log "  Start with: sudo systemctl start $APP_NAME"
+  log "  Logs with:  journalctl -u $APP_NAME -f"
+}
+
 # ─── Main ──────────────────────────────────────────────────
 main() {
   banner
@@ -240,16 +352,33 @@ main() {
   create_admin
 
   echo ""
+  log "Setting up process management…"
+  echo ""
+
+  # Try PM2 first (preferred), also create systemd as backup
+  setup_pm2
+  setup_systemd
+
+  echo ""
   echo -e "${GREEN}${BOLD}  ✓ Encodium installation complete!${NC}"
   echo ""
-  echo "  Start the server:"
-  echo "    cd $SCRIPT_DIR && node server.js"
-  echo ""
-  echo "  Or with PM2:"
-  echo "    pm2 start server.js --name encodium"
-  echo ""
-  echo "  Default login: admin@encodium.local / admin"
-  echo "  Running on: http://localhost:${PORT:-3001}"
+  echo "  ┌──────────────────────────────────────────────┐"
+  echo "  │  Encodium is running on port $APP_PORT           │"
+  echo "  │  http://localhost:$APP_PORT                       │"
+  echo "  │                                              │"
+  echo "  │  Login: admin@encodium.local / admin         │"
+  echo "  │                                              │"
+  echo "  │  PM2 commands:                               │"
+  echo "  │    pm2 status                                │"
+  echo "  │    pm2 logs $APP_NAME                        │"
+  echo "  │    pm2 restart $APP_NAME                     │"
+  echo "  │    pm2 stop $APP_NAME                        │"
+  echo "  │                                              │"
+  echo "  │  Systemd commands:                           │"
+  echo "  │    sudo systemctl status $APP_NAME           │"
+  echo "  │    sudo systemctl restart $APP_NAME          │"
+  echo "  │    journalctl -u $APP_NAME -f                │"
+  echo "  └──────────────────────────────────────────────┘"
   echo ""
 }
 
