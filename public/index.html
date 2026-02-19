@@ -44,6 +44,7 @@
       <li data-tab="encode"><i class="fas fa-cogs"></i> <span>Encoding</span></li>
       <li data-tab="history"><i class="fas fa-history"></i> <span>History</span></li>
       <li data-tab="hardware"><i class="fas fa-microchip"></i> <span>Hardware</span></li>
+      <li data-tab="logs"><i class="fas fa-terminal"></i> <span>Logs</span></li>
     </ul>
     <div class="sidebar-footer">
       <button id="btn-logout" class="btn btn-sm btn-ghost"><i class="fas fa-sign-out-alt"></i> Logout</button>
@@ -170,6 +171,38 @@
       <div id="hw-info" class="hw-grid"></div>
       <h3 class="mt-2">Available Presets</h3>
       <div id="hw-presets" class="preset-list"></div>
+    </section>
+
+    <!-- ─── Logs ──────────────────────────────────────────── -->
+    <section id="tab-logs" class="tab-panel">
+      <header class="panel-header">
+        <h2><i class="fas fa-terminal"></i> Live Logs</h2>
+        <div class="header-actions">
+          <select id="log-level-filter" class="select" style="width:130px">
+            <option value="">All Levels</option>
+            <option value="debug">Debug</option>
+            <option value="info">Info</option>
+            <option value="warn">Warning</option>
+            <option value="error">Error</option>
+            <option value="success">Success</option>
+          </select>
+          <select id="log-source-filter" class="select" style="width:150px">
+            <option value="">All Sources</option>
+            <option value="scanner">Scanner</option>
+            <option value="enrich">Enrich</option>
+            <option value="thumbs">Thumbs</option>
+            <option value="encoder">Encoder</option>
+            <option value="server">Server</option>
+          </select>
+          <label class="checkbox-label" style="margin-left:8px;font-size:.8rem">
+            <input type="checkbox" id="log-autoscroll" checked> Auto-scroll
+          </label>
+          <button id="btn-clear-logs" class="btn btn-sm btn-ghost"><i class="fas fa-eraser"></i> Clear</button>
+        </div>
+      </header>
+      <div id="log-container" class="log-container">
+        <div id="log-entries" class="log-entries"></div>
+      </div>
     </section>
 
   </main>

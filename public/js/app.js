@@ -95,6 +95,7 @@
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     connectSSE();
+    loadLogs();
     switchTab('dashboard');
   }
 
@@ -123,6 +124,9 @@
         if (pct) pct.textContent = d.percent + '%';
       } catch {}
     });
+    sse.addEventListener('log', (e) => {
+      try { addLogEntry(JSON.parse(e.data)); } catch {}
+    });
     sse.onerror = () => { setTimeout(connectSSE, 5000); };
   }
 
@@ -145,6 +149,7 @@
     else if (tab === 'encode') loadEncodeTab();
     else if (tab === 'history') loadHistory();
     else if (tab === 'hardware') loadHardware();
+    else if (tab === 'logs') { loadLogs(); }
   }
 
   /* ═══════════════════════════════════════════════════════════
@@ -189,13 +194,20 @@
       try {
         const s = await api('GET', '/scan/progress');
         const el = document.getElementById('scan-progress');
-        if (s.scanning) {
+        if (s.running) {
           el.style.display = 'block';
-          document.getElementById('scan-label').textContent = s.phase || 'Scanning…';
-          document.getElementById('scan-bar').style.width = (s.progress || 0) + '%';
-          document.getElementById('scan-detail').textContent = s.found != null ? `Found: ${s.found} files` : '';
+          document.getElementById('scan-label').textContent = s.currentFolder || 'Scanning…';
+          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
+          document.getElementById('scan-bar').style.width = pct + '%';
+          document.getElementById('scan-detail').textContent =
+            `${s.done}/${s.total} files — ${s.skipped} skipped — ${s.errors} errors`;
         } else {
           el.style.display = 'none';
+          if (s.finishedAt) {
+            // Scan just finished — refresh stats
+            loadStats();
+            loadCodecChart();
+          }
         }
       } catch {}
     }, 1500);
@@ -566,6 +578,75 @@
   }
 
   /* ═══════════════════════════════════════════════════════════
+     LOGS
+     ═══════════════════════════════════════════════════════════ */
+  let logEntries = [];
+  const LOG_MAX = 500;
+
+  function initLogs() {
+    document.getElementById('log-level-filter').addEventListener('change', renderLogs);
+    document.getElementById('log-source-filter').addEventListener('change', renderLogs);
+    document.getElementById('btn-clear-logs').addEventListener('click', () => {
+      logEntries = [];
+      renderLogs();
+    });
+  }
+
+  async function loadLogs() {
+    try {
+      const data = await api('GET', '/logs?limit=200');
+      logEntries = data;
+      renderLogs();
+    } catch {}
+  }
+
+  function addLogEntry(entry) {
+    logEntries.push(entry);
+    if (logEntries.length > LOG_MAX) logEntries = logEntries.slice(-LOG_MAX);
+    if (currentTab === 'logs') appendLogDOM(entry);
+  }
+
+  function renderLogs() {
+    const level = document.getElementById('log-level-filter').value;
+    const source = document.getElementById('log-source-filter').value;
+    let filtered = logEntries;
+    if (level) filtered = filtered.filter(e => e.level === level);
+    if (source) filtered = filtered.filter(e => e.source === source);
+
+    const el = document.getElementById('log-entries');
+    el.innerHTML = filtered.map(logEntryHTML).join('');
+    autoScrollLogs();
+  }
+
+  function appendLogDOM(entry) {
+    const level = document.getElementById('log-level-filter').value;
+    const source = document.getElementById('log-source-filter').value;
+    if (level && entry.level !== level) return;
+    if (source && entry.source !== source) return;
+
+    const el = document.getElementById('log-entries');
+    el.insertAdjacentHTML('beforeend', logEntryHTML(entry));
+    autoScrollLogs();
+  }
+
+  function logEntryHTML(e) {
+    const t = new Date(e.ts).toLocaleTimeString();
+    const icons = { debug: 'bug', info: 'info-circle', warn: 'exclamation-triangle', error: 'times-circle', success: 'check-circle' };
+    return `<div class="log-entry log-${e.level}">
+      <span class="log-time">${t}</span>
+      <span class="log-level-badge log-lvl-${e.level}"><i class="fas fa-${icons[e.level] || 'circle'}"></i> ${e.level}</span>
+      <span class="log-source">[${esc(e.source)}]</span>
+      <span class="log-msg">${esc(e.message)}</span>
+    </div>`;
+  }
+
+  function autoScrollLogs() {
+    if (!document.getElementById('log-autoscroll').checked) return;
+    const container = document.getElementById('log-container');
+    container.scrollTop = container.scrollHeight;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
      BOOT
      ═══════════════════════════════════════════════════════════ */
   document.addEventListener('DOMContentLoaded', () => {
@@ -577,6 +658,7 @@
     initEncodeTab();
     initHistory();
     initHardware();
+    initLogs();
 
     // Check for existing session
     if (token) {

@@ -18,6 +18,8 @@ const path = require('path');
 const { getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb, pool } = require('./db');
 require('dotenv').config();
 
+const logger = require('./services/logger');
+
 const MEDIA_DIR = process.env.MEDIA_DIR || '/home/coder/Videos';
 const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.flv', '.m4v', '.ts', '.3gp']);
 const THUMB_DIR  = process.env.THUMB_DIR || path.join(__dirname, 'data', 'thumbs');
@@ -41,6 +43,9 @@ function cancelScan() {
   cancelRequested = true;
   return true;
 }
+
+// Backwards compatibility: some callers expect `getState()`
+function getState() { return getProgress(); }
 
 /* ── ffprobe helpers ─────────────────────────────────────── */
 function parseFraction(str) {
@@ -130,9 +135,14 @@ async function scanDirectory(onProgress = null) {
   const notify = () => { if (onProgress) try { onProgress({ ...scanProgress }); } catch {} };
 
   try {
-    if (!fs.existsSync(MEDIA_DIR)) throw new Error(`MEDIA_DIR not found: ${MEDIA_DIR}`);
+    logger.info('scanner', `Starting scan of ${MEDIA_DIR}`);
+    if (!fs.existsSync(MEDIA_DIR)) {
+      logger.error('scanner', `MEDIA_DIR not found: ${MEDIA_DIR}`);
+      throw new Error(`MEDIA_DIR not found: ${MEDIA_DIR}`);
+    }
 
     const existingPaths = await getAllExistingPaths();
+    logger.info('scanner', `${existingPaths.size} files already in database`);
     const entries = fs.readdirSync(MEDIA_DIR, { withFileTypes: true });
 
     // Process top-level directories as folders
@@ -212,11 +222,17 @@ async function scanDirectory(onProgress = null) {
     scanProgress.currentFolder = null;
     scanProgress.finishedAt = new Date().toISOString();
     notify();
+    if (cancelRequested) {
+      logger.warn('scanner', 'Scan cancelled by user');
+    } else {
+      logger.success('scanner', `Scan complete: ${scanProgress.total} new, ${scanProgress.skipped} skipped, ${scanProgress.errors} errors`);
+    }
     cancelRequested = false;
   } catch (e) {
     scanProgress.running = false;
     scanProgress.finishedAt = new Date().toISOString();
     scanProgress.lastError = e.message;
+    logger.error('scanner', `Scan failed: ${e.message}`);
     throw e;
   }
 }
@@ -228,8 +244,8 @@ async function enrichVideoMeta(concurrency = 3) {
     const [rows] = await pool.query(
       "SELECT id, file_path FROM videos WHERE codec IS NULL OR duration IS NULL LIMIT 2000"
     );
-    if (!rows.length) return;
-    console.log(`[enrich] Enrichissement de ${rows.length} vidéo(s)…`);
+    if (!rows.length) { logger.info('enrich', 'No videos to enrich — all up to date'); return; }
+    logger.info('enrich', `Enriching metadata for ${rows.length} video(s)…`);
     const tasks = rows.map(row => async () => {
       try {
         const meta = await getVideoMeta(row.file_path);
@@ -237,8 +253,8 @@ async function enrichVideoMeta(concurrency = 3) {
       } catch {}
     });
     await runConcurrent(tasks, concurrency);
-    console.log('[enrich] Terminé.');
-  } catch (e) { console.error('[enrichVideoMeta]', e.message); }
+    logger.success('enrich', `Metadata enrichment complete (${rows.length} videos)`);
+  } catch (e) { logger.error('enrich', `Enrichment failed: ${e.message}`); }
 }
 
 /* ── Post-scan: generate missing thumbnails ──────────────── */
@@ -247,8 +263,8 @@ async function generateMissingThumbs(limit = 500, concurrency = 3) {
     const [rows] = await pool.query(
       'SELECT id, file_path FROM videos WHERE thumb_path IS NULL ORDER BY id DESC LIMIT ?', [limit]
     );
-    if (!rows.length) return;
-    console.log(`[thumbs] Génération de ${rows.length} miniature(s)…`);
+    if (!rows.length) { logger.info('thumbs', 'No thumbnails to generate — all up to date'); return; }
+    logger.info('thumbs', `Generating ${rows.length} thumbnail(s)…`);
     const tasks = rows.map(v => async () => {
       try {
         const tp = await generateThumb(v.file_path, v.id);
@@ -256,12 +272,12 @@ async function generateMissingThumbs(limit = 500, concurrency = 3) {
       } catch {}
     });
     await runConcurrent(tasks, concurrency);
-    console.log('[thumbs] Terminé.');
-  } catch (e) { console.error('[generateMissingThumbs]', e.message); }
+    logger.success('thumbs', `Thumbnail generation complete (${rows.length} videos)`);
+  } catch (e) { logger.error('thumbs', `Thumbnail generation failed: ${e.message}`); }
 }
 
 module.exports = {
   MEDIA_DIR, THUMB_DIR, VIDEO_EXTS,
   scanDirectory, getProgress, cancelScan,
-  enrichVideoMeta, generateMissingThumbs, generateThumb,
+  getState, enrichVideoMeta, generateMissingThumbs, generateThumb,
 };

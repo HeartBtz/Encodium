@@ -487,21 +487,9 @@ setup_pm2() {
     sleep 1
   fi
 
-  # Read .env vars to embed in ecosystem config
-  # (PM2 does NOT support env_file natively — we pass env vars directly)
-  local ENV_BLOCK=""
-  if [[ -f "$SCRIPT_DIR/.env" ]]; then
-    while IFS='=' read -r key value; do
-      # Skip comments and empty lines
-      [[ -z "$key" || "$key" =~ ^# ]] && continue
-      # Trim whitespace
-      key="$(echo "$key" | xargs)"
-      value="$(echo "$value" | xargs)"
-      ENV_BLOCK+="      ${key}: '${value}',"$'\n'
-    done < "$SCRIPT_DIR/.env"
-  fi
-
   # Generate ecosystem config
+  # NOTE: We do NOT embed env vars here — the app loads .env via dotenv.
+  # This avoids stale values if the user edits .env after install.
   cat > "$SCRIPT_DIR/ecosystem.config.js" <<EOF
 module.exports = {
   apps: [{
@@ -515,7 +503,7 @@ module.exports = {
     max_memory_restart: '512M',
     env: {
       NODE_ENV: 'production',
-${ENV_BLOCK}    },
+    },
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     error_file: '${SCRIPT_DIR}/data/logs/error.log',
     out_file: '${SCRIPT_DIR}/data/logs/out.log',

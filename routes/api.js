@@ -13,6 +13,7 @@ const db         = require('../db');
 const scanner    = require('../scanner');
 const gpuDetect  = require('../services/gpu-detect');
 const encoder    = require('../services/encoder');
+const logger     = require('../services/logger');
 const { signToken, requireAuth, requireAdmin } = require('../middleware/auth');
 
 /* ═══════════════════════════════════════════════════════════════
@@ -47,8 +48,9 @@ router.get('/auth/me', requireAuth, async (req, res) => {
 router.post('/scan', requireAuth, async (req, res) => {
   try {
     const state = scanner.getState();
-    if (state.scanning) return res.status(409).json({ error: 'Scan already in progress' });
-    scanner.scanDirectory().catch(e => console.error('[scan] error:', e.message));
+    if (state.running) return res.status(409).json({ error: 'Scan already in progress' });
+    logger.info('scanner', 'Scan triggered by user');
+    scanner.scanDirectory().catch(e => logger.error('scanner', `Scan error: ${e.message}`));
     res.json({ message: 'Scan started' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -65,15 +67,17 @@ router.post('/scan/cancel', requireAuth, (req, res) => {
 router.post('/enrich', requireAuth, async (req, res) => {
   try {
     const state = scanner.getState();
-    if (state.scanning) return res.status(409).json({ error: 'Scan in progress' });
-    scanner.enrichVideoMeta().catch(e => console.error('[enrich] error:', e.message));
+    if (state.running) return res.status(409).json({ error: 'Scan in progress' });
+    logger.info('enrich', 'Metadata enrichment triggered by user');
+    scanner.enrichVideoMeta().catch(e => logger.error('enrich', `Enrichment error: ${e.message}`));
     res.json({ message: 'Metadata enrichment started' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/thumbs', requireAuth, async (req, res) => {
   try {
-    scanner.generateMissingThumbs().catch(e => console.error('[thumbs] error:', e.message));
+    logger.info('thumbs', 'Thumbnail generation triggered by user');
+    scanner.generateMissingThumbs().catch(e => logger.error('thumbs', `Thumbs error: ${e.message}`));
     res.json({ message: 'Thumbnail generation started' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -272,6 +276,18 @@ router.get('/events', (req, res) => {
   });
   res.write('event: connected\ndata: {}\n\n');
   encoder.addSSEClient(res);
+  logger.addClient(res);
+  req.on('close', () => { logger.removeClient(res); });
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   LOGS — Recent logs endpoint
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/logs', requireAuth, (req, res) => {
+  const limit = Math.min(500, parseInt(req.query.limit || '100', 10));
+  const level = req.query.level || 'info';
+  res.json(logger.getRecent(limit, level));
 });
 
 /* ═══════════════════════════════════════════════════════════════
