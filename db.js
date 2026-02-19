@@ -27,6 +27,16 @@ const pool = mysql.createPool({
   timezone: '+00:00',
 });
 
+async function safeAlter(conn, sql) {
+  try { await conn.query(sql); } catch (e) {
+    // Ignore "duplicate column", "column doesn't exist" (for CHANGE), "Unknown column" etc.
+    if (e.errno === 1060 || e.errno === 1054 || e.errno === 1091) return;
+    // If it's just "can't drop / already exists" type, also ignore
+    if (e.message && e.message.includes('Duplicate')) return;
+    console.warn(`[DB] migration skipped: ${e.message}`);
+  }
+}
+
 async function initSchema() {
   const conn = await pool.getConnection();
   try {
@@ -78,20 +88,21 @@ async function initSchema() {
       CREATE TABLE IF NOT EXISTS encode_jobs (
         id INT AUTO_INCREMENT PRIMARY KEY,
         video_id INT NOT NULL,
-        target_codec VARCHAR(20) NOT NULL COMMENT 'h265 or av1',
-        encoder VARCHAR(50) NOT NULL COMMENT 'hevc_nvenc, libx265, etc.',
+        target_codec VARCHAR(20) DEFAULT '' COMMENT 'h265 or av1',
+        encoder VARCHAR(50) DEFAULT '' COMMENT 'hevc_nvenc, libx265, etc.',
         preset_id VARCHAR(100),
+        preset_json TEXT,
         quality VARCHAR(20) DEFAULT 'balanced',
         replace_original TINYINT DEFAULT 0,
-        status ENUM('pending','encoding','done','error','cancelled') DEFAULT 'pending',
+        status ENUM('pending','encoding','done','failed','error','cancelled') DEFAULT 'pending',
         progress TINYINT UNSIGNED DEFAULT 0,
         file_size_before BIGINT DEFAULT 0,
-        file_size_after BIGINT DEFAULT 0,
+        output_size BIGINT DEFAULT 0,
         output_path VARCHAR(1000),
         error TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         started_at DATETIME,
-        finished_at DATETIME,
+        ended_at DATETIME,
         KEY idx_status (status),
         KEY idx_video (video_id),
         FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
@@ -106,6 +117,17 @@ async function initSchema() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // ── Migrations for existing databases ──
+    await safeAlter(conn, 'ALTER TABLE encode_jobs ADD COLUMN preset_json TEXT AFTER preset_id');
+    await safeAlter(conn, 'ALTER TABLE encode_jobs ADD COLUMN output_size BIGINT DEFAULT 0 AFTER file_size_before');
+    await safeAlter(conn, 'ALTER TABLE encode_jobs ADD COLUMN ended_at DATETIME AFTER started_at');
+    await safeAlter(conn, "ALTER TABLE encode_jobs MODIFY COLUMN target_codec VARCHAR(20) DEFAULT ''");
+    await safeAlter(conn, "ALTER TABLE encode_jobs MODIFY COLUMN encoder VARCHAR(50) DEFAULT ''");
+    await safeAlter(conn, "ALTER TABLE encode_jobs MODIFY COLUMN status ENUM('pending','encoding','done','failed','error','cancelled') DEFAULT 'pending'");
+    // Migrate old column names if they exist
+    await safeAlter(conn, 'ALTER TABLE encode_jobs CHANGE COLUMN file_size_after output_size BIGINT DEFAULT 0');
+    await safeAlter(conn, 'ALTER TABLE encode_jobs CHANGE COLUMN finished_at ended_at DATETIME');
   } finally {
     conn.release();
   }

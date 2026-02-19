@@ -14,7 +14,7 @@ const scanner    = require('../scanner');
 const gpuDetect  = require('../services/gpu-detect');
 const encoder    = require('../services/encoder');
 const logger     = require('../services/logger');
-const { signToken, requireAuth, requireAdmin } = require('../middleware/auth');
+const { signToken, verifyToken, requireAuth, requireAdmin } = require('../middleware/auth');
 
 /* ═══════════════════════════════════════════════════════════════
    AUTH
@@ -112,13 +112,13 @@ router.get('/videos', requireAuth, async (req, res) => {
       params.push(folder);
     }
     if (codec) {
-      where.push('v.video_codec = ?');
+      where.push('v.codec = ?');
       params.push(codec);
     }
 
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const allowedSorts = ['filename', 'folder', 'size', 'duration', 'video_codec', 'width', 'created_at'];
+    const allowedSorts = ['filename', 'folder', 'size', 'duration', 'codec', 'width', 'created_at'];
     const sortCol = allowedSorts.includes(sort) ? sort : 'filename';
     const sortDir = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
@@ -162,8 +162,8 @@ router.get('/codec-stats', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
     const [rows] = await pool.query(
-      `SELECT COALESCE(video_codec,'unknown') as codec, COUNT(*) as count, SUM(size) as total_size
-       FROM videos GROUP BY video_codec ORDER BY count DESC`
+      `SELECT COALESCE(codec,'unknown') as codec, COUNT(*) as count, SUM(size) as total_size
+       FROM videos GROUP BY codec ORDER BY count DESC`
     );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -178,7 +178,7 @@ router.get('/stats', requireAuth, async (req, res) => {
               SUM(status='pending') as pending,
               SUM(status='encoding') as encoding,
               SUM(status='done') as done,
-              SUM(status='failed') as failed,
+              SUM(status='error') as errors,
               SUM(status='cancelled') as cancelled
        FROM encode_jobs`
     );
@@ -191,7 +191,7 @@ router.get('/stats', requireAuth, async (req, res) => {
    ═══════════════════════════════════════════════════════════════ */
 
 router.get('/thumb/:id', (req, res) => {
-  const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `${req.params.id}.jpg`);
+  const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${req.params.id}.jpg`);
   if (fs.existsSync(thumbPath)) return res.sendFile(thumbPath);
   res.status(404).end();
 });
@@ -265,7 +265,6 @@ router.post('/encode/workers', requireAuth, (req, res) => {
 router.get('/events', (req, res) => {
   const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
   try {
-    const { verifyToken } = require('../middleware/auth');
     verifyToken(tkn);
   } catch { return res.status(401).json({ error: 'Invalid token' }); }
   res.writeHead(200, {

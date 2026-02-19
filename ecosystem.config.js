@@ -11,5 +11,9 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
     },
+    log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    error_file: '/home/coder/encodium/data/logs/error.log',
+    out_file: '/home/coder/encodium/data/logs/out.log',
+    merge_logs: true,
   }],
 };

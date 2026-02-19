@@ -4,7 +4,6 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
-const db  = require('../db');
 
 const SECRET = process.env.JWT_SECRET || 'encodium-change-me';
 

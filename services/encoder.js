@@ -130,8 +130,8 @@ async function processJob(job) {
   const pool = db.getPool();
   const [[video]] = await pool.query('SELECT * FROM videos WHERE id=?', [job.video_id]);
   if (!video) {
-    await pool.query("UPDATE encode_jobs SET status='failed', error='Video not found', ended_at=NOW() WHERE id=?", [job.id]);
-    broadcast('job_update', { id: job.id, status: 'failed', error: 'Video not found' });
+    await pool.query("UPDATE encode_jobs SET status='error', error='Video not found', ended_at=NOW() WHERE id=?", [job.id]);
+    broadcast('job_update', { id: job.id, status: 'error', error: 'Video not found' });
     return;
   }
 
@@ -199,8 +199,8 @@ async function processJob(job) {
 
       if (code !== 0) {
         const errTail = stderrBuf.slice(-500);
-        await pool.query("UPDATE encode_jobs SET status='failed', error=?, ended_at=NOW() WHERE id=?", [errTail, job.id]);
-        broadcast('job_update', { id: job.id, status: 'failed', error: errTail });
+        await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?", [errTail, job.id]);
+        broadcast('job_update', { id: job.id, status: 'error', error: errTail });
         try { await fsp.unlink(outFile); } catch {}
         resolve();
         return;
@@ -220,7 +220,7 @@ async function processJob(job) {
           const targetPath = path.join(path.dirname(inFile), `${baseName}${ext}`);
           await moveFile(outFile, targetPath);
           finalPath = targetPath;
-          await pool.query('UPDATE videos SET file_path=?, size=?, video_codec=? WHERE id=?',
+          await pool.query('UPDATE videos SET file_path=?, size=?, codec=? WHERE id=?',
             [targetPath, newSize, preset.codec === 'av1' ? 'av1' : 'hevc', job.video_id]);
         } catch (e) {
           console.error(`[enc] #${job.id} replace-original failed:`, e.message);
@@ -297,7 +297,7 @@ async function cancelPending() {
 async function retryJob(jobId) {
   const pool = db.getPool();
   const [[job]] = await pool.query('SELECT * FROM encode_jobs WHERE id=?', [jobId]);
-  if (!job || !['failed', 'cancelled'].includes(job.status)) throw new Error('Cannot retry');
+  if (!job || !['failed', 'error', 'cancelled'].includes(job.status)) throw new Error('Cannot retry');
   await pool.query("UPDATE encode_jobs SET status='pending', error=NULL, started_at=NULL, ended_at=NULL, output_path=NULL, output_size=NULL WHERE id=?", [jobId]);
   broadcast('job_update', { id: jobId, status: 'pending' });
   setImmediate(processQueue);

@@ -1,668 +1,630 @@
-/**
- * Encodium — Frontend app
- */
-(function () {
+/* ═══════════════════════════════════════════════════════════
+   Encodium — Front-end application
+   XFlix-style admin panel
+   ═══════════════════════════════════════════════════════════ */
+
+;(function () {
   'use strict';
 
-  /* ─── State ────────────────────────────────────────────── */
-  let token = localStorage.getItem('encodium_token') || '';
-  let currentTab = 'dashboard';
-  let libPage = 1, libOrder = 'asc';
-  let selectedIds = new Set();
-  let presets = [];
+  /* ── State ────────────────────────────────────────────── */
+  let token = localStorage.getItem('enc_token') || '';
+  let currentUser = null;
   let sse = null;
-  let scanPollTimer = null;
 
-  /* ─── API helper ───────────────────────────────────────── */
-  async function api(method, path, body) {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
-    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
-    if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(`/api${path}`, opts);
-    if (res.status === 401) { logout(); throw new Error('Session expired'); }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    return data;
+  // Library
+  let libPage = 1;
+  const libLimit = 50;
+  let libOrder = 'asc';
+  let libSelected = new Set();
+  let libSearchTimer = null;
+
+  // Encode
+  let presets = [];
+
+  // Logs
+  const logEntries = [];
+  const MAX_LOG = 500;
+
+  /* ── Helpers ──────────────────────────────────────────── */
+  const $ = (sel, ctx) => (ctx || document).querySelector(sel);
+  const $$ = (sel, ctx) => [...(ctx || document).querySelectorAll(sel)];
+
+  function api(path, opts = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return fetch(`/api${path}`, { ...opts, headers })
+      .then(async r => {
+        if (r.status === 401) { logout(); throw new Error('Session expired'); }
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `Error ${r.status}`);
+        return j;
+      });
   }
 
-  /* ─── Toast ────────────────────────────────────────────── */
+  function fmtSize(b) {
+    if (!b || b <= 0) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), u.length - 1);
+    return (b / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+  function fmtDur(s) {
+    if (!s || s <= 0) return '0s';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h) return `${h}h ${m}m`;
+    return `${m}m ${Math.floor(s % 60)}s`;
+  }
+  function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function truncPath(p) { return p ? p.split('/').pop() : ''; }
+
   function toast(msg, type = 'info') {
+    const c = $('#toast-container');
     const el = document.createElement('div');
     el.className = `toast toast-${type}`;
-    el.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i> ${esc(msg)}`;
-    document.getElementById('toast-container').appendChild(el);
+    el.textContent = msg;
+    c.appendChild(el);
     setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 4000);
   }
 
-  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-  /* ─── Format helpers ───────────────────────────────────── */
-  function fmtSize(b) {
-    if (!b) return '—';
-    if (b > 1e12) return (b / 1e12).toFixed(2) + ' TB';
-    if (b > 1e9) return (b / 1e9).toFixed(2) + ' GB';
-    if (b > 1e6) return (b / 1e6).toFixed(1) + ' MB';
-    return (b / 1e3).toFixed(0) + ' KB';
-  }
-  function fmtDuration(s) {
-    if (!s) return '—';
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
-    return h > 0 ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m${String(sec).padStart(2, '0')}s`;
-  }
-  function fmtDate(d) {
-    if (!d) return '—';
-    return new Date(d).toLocaleString();
-  }
-  function codecBadge(c) {
-    const lc = (c || '').toLowerCase();
-    if (lc.includes('h264') || lc.includes('avc')) return '<span class="badge badge-h264">H.264</span>';
-    if (lc.includes('hevc') || lc.includes('h265') || lc === 'hevc') return '<span class="badge badge-hevc">HEVC</span>';
-    if (lc.includes('av1'))  return '<span class="badge badge-av1">AV1</span>';
-    if (lc.includes('vp9'))  return '<span class="badge badge-vp9">VP9</span>';
-    return `<span class="badge badge-other">${esc(c || '?')}</span>`;
-  }
-  function statusBadge(s) { return `<span class="status-badge status-${s}">${s}</span>`; }
-
-  /* ═══════════════════════════════════════════════════════════
-     AUTH
-     ═══════════════════════════════════════════════════════════ */
+  /* ── Auth ──────────────────────────────────────────────── */
   function initAuth() {
-    document.getElementById('login-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const email = document.getElementById('login-email').value;
-      const pass = document.getElementById('login-pass').value;
-      try {
-        const data = await api('POST', '/auth/login', { email, password: pass });
-        token = data.token;
-        localStorage.setItem('encodium_token', token);
-        showApp();
-      } catch (err) {
-        const el = document.getElementById('login-error');
-        el.textContent = err.message; el.style.display = 'block';
-      }
-    });
+    if (token) {
+      api('/auth/me')
+        .then(u => { currentUser = u; showApp(); })
+        .catch(() => { token = ''; localStorage.removeItem('enc_token'); showLogin(); });
+    } else {
+      showLogin();
+    }
+  }
+
+  function showLogin() {
+    $('#login-screen').style.display = '';
+    $('#app').style.display = 'none';
+    if (sse) { sse.close(); sse = null; }
+  }
+
+  function showApp() {
+    $('#login-screen').style.display = 'none';
+    $('#app').style.display = '';
+    $('#adminUser').textContent = currentUser.email;
+    connectSSE();
+    loadDashboard();
+    loadFolders();
+    switchTab('dashboard');
   }
 
   function logout() {
     token = '';
-    localStorage.removeItem('encodium_token');
+    currentUser = null;
+    localStorage.removeItem('enc_token');
     if (sse) { sse.close(); sse = null; }
-    document.getElementById('app').style.display = 'none';
-    document.getElementById('login-screen').style.display = 'flex';
+    showLogin();
   }
 
-  async function showApp() {
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'flex';
-    connectSSE();
-    loadLogs();
-    switchTab('dashboard');
-  }
+  $('#login-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const errEl = $('#login-error');
+    errEl.style.display = 'none';
+    try {
+      const data = await api('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: $('#login-email').value,
+          password: $('#login-pass').value,
+        }),
+      });
+      token = data.token;
+      localStorage.setItem('enc_token', token);
+      currentUser = data.user;
+      showApp();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = '';
+    }
+  });
 
-  /* ═══════════════════════════════════════════════════════════
-     SSE
-     ═══════════════════════════════════════════════════════════ */
+  $('#btn-logout').addEventListener('click', logout);
+
+  /* ── SSE ──────────────────────────────────────────────── */
   function connectSSE() {
     if (sse) sse.close();
-    sse = new EventSource(`/api/events?token=${token}`);
-    sse.addEventListener('job_update', (e) => {
-      try {
-        const d = JSON.parse(e.data);
-        if (d.status === 'done') toast(`Job #${d.id} done`, 'success');
-        else if (d.status === 'failed') toast(`Job #${d.id} failed: ${d.error || ''}`, 'error');
-        if (currentTab === 'encode') loadEncodeTab();
-        if (currentTab === 'history') loadHistory();
-        if (currentTab === 'dashboard') loadStats();
-      } catch {}
+    sse = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+    sse.addEventListener('job_update', e => {
+      try { handleJobUpdate(JSON.parse(e.data)); } catch {}
     });
-    sse.addEventListener('job_progress', (e) => {
-      try {
-        const d = JSON.parse(e.data);
-        const bar = document.getElementById(`job-bar-${d.id}`);
-        const pct = document.getElementById(`job-pct-${d.id}`);
-        if (bar) bar.style.width = d.percent + '%';
-        if (pct) pct.textContent = d.percent + '%';
-      } catch {}
+    sse.addEventListener('job_progress', e => {
+      try { handleJobProgress(JSON.parse(e.data)); } catch {}
     });
-    sse.addEventListener('log', (e) => {
+    sse.addEventListener('log', e => {
       try { addLogEntry(JSON.parse(e.data)); } catch {}
     });
-    sse.onerror = () => { setTimeout(connectSSE, 5000); };
+    sse.onerror = () => { setTimeout(() => { if (token) connectSSE(); }, 5000); };
   }
 
-  /* ═══════════════════════════════════════════════════════════
-     NAVIGATION
-     ═══════════════════════════════════════════════════════════ */
-  function initNav() {
-    document.querySelectorAll('.sidebar-nav li').forEach(li => {
-      li.addEventListener('click', () => switchTab(li.dataset.tab));
-    });
-    document.getElementById('btn-logout').addEventListener('click', logout);
-  }
+  /* ── Tab switching ────────────────────────────────────── */
+  $$('.sidenav-item').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
 
   function switchTab(tab) {
-    currentTab = tab;
-    document.querySelectorAll('.sidebar-nav li').forEach(li => li.classList.toggle('active', li.dataset.tab === tab));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`));
-    if (tab === 'dashboard') loadDashboard();
-    else if (tab === 'library') loadLibrary();
-    else if (tab === 'encode') loadEncodeTab();
-    else if (tab === 'history') loadHistory();
-    else if (tab === 'hardware') loadHardware();
-    else if (tab === 'logs') { loadLogs(); }
+    $$('.sidenav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    $$('.admin-tab').forEach(s => s.classList.toggle('active', s.id === `tab-${tab}`));
+    if (tab === 'library') loadLibrary();
+    if (tab === 'encode') loadEncodeQueue();
+    if (tab === 'hardware') loadHardware();
+    if (tab === 'logs') renderLogs();
   }
 
-  /* ═══════════════════════════════════════════════════════════
+  /* ═══════════════════════════════════════════════════════
      DASHBOARD
-     ═══════════════════════════════════════════════════════════ */
+     ═══════════════════════════════════════════════════════ */
+
   async function loadDashboard() {
-    loadStats();
-    loadCodecChart();
-    pollScanProgress();
-  }
-
-  async function loadStats() {
     try {
-      const d = await api('GET', '/stats');
-      document.getElementById('stat-videos').textContent = d.videos.count.toLocaleString();
-      document.getElementById('stat-size').textContent = fmtSize(d.videos.total_size);
-      document.getElementById('stat-duration').textContent = fmtDuration(d.videos.total_duration);
-      document.getElementById('stat-jobs').textContent = `${d.jobs.encoding || 0}/${d.jobs.pending || 0}`;
-    } catch {}
+      const [stats, codecs] = await Promise.all([api('/stats'), api('/codec-stats')]);
+      $('#stat-videos').textContent = (stats.videos.count || 0).toLocaleString();
+      $('#stat-size').textContent = fmtSize(stats.videos.total_size);
+      $('#stat-duration').textContent = fmtDur(stats.videos.total_duration);
+
+      const jb = stats.jobs;
+      const jobTxt = jb ? `${jb.total || 0} (${jb.encoding || 0} en cours)` : '0';
+      $('#stat-jobs').textContent = jobTxt;
+
+      // Codec chart
+      const grid = $('#codec-chart');
+      if (codecs && codecs.length) {
+        grid.innerHTML = codecs.map(c => `
+          <div class="codec-card">
+            <div class="cc-name">${escHtml(c.codec || 'inconnu')}</div>
+            <div class="cc-count">${c.count}</div>
+            <div class="cc-size">${fmtSize(c.total_size)}</div>
+          </div>
+        `).join('');
+      } else {
+        grid.innerHTML = '<p style="color:var(--a-text-muted);padding:12px">Aucune donnée codec</p>';
+      }
+    } catch (e) { toast(`Erreur dashboard: ${e.message}`, 'error'); }
   }
 
-  async function loadCodecChart() {
+  /* ── Scan progress ────────────────────────────────────── */
+  let scanPollTimer = null;
+
+  $('#btn-scan').addEventListener('click', async () => {
     try {
-      const rows = await api('GET', '/codec-stats');
-      const max = Math.max(1, ...rows.map(r => r.count));
-      const colors = { h264: '#3498db', hevc: '#00cec9', av1: '#feca57', vp9: '#a29bfe' };
-      document.getElementById('codec-chart').innerHTML = rows.map(r => {
-        const pct = Math.round((r.count / max) * 100);
-        const color = colors[r.codec] || '#8a8f9d';
-        return `<div class="codec-row">
-          <span class="codec-label">${esc(r.codec)}</span>
-          <div class="codec-bar-wrap"><div class="codec-bar" style="width:${pct}%;background:${color}">${r.count}</div></div>
-          <span class="codec-count">${fmtSize(r.total_size)}</span>
-        </div>`;
-      }).join('');
-    } catch {}
-  }
+      await api('/scan', { method: 'POST' });
+      toast('Scan lancé', 'success');
+      startScanPoll();
+    } catch (e) { toast(e.message, 'error'); }
+  });
 
-  function pollScanProgress() {
-    if (scanPollTimer) clearInterval(scanPollTimer);
+  $('#btn-scan-cancel').addEventListener('click', async () => {
+    try {
+      await api('/scan/cancel', { method: 'POST' });
+      toast('Annulation demandée', 'warn');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  function startScanPoll() {
+    if (scanPollTimer) return;
+    const wrap = $('#scan-progress');
+    const bar = $('#scan-bar');
+    const detail = $('#scan-detail');
+    const btnScan = $('#btn-scan');
+    const btnCancel = $('#btn-scan-cancel');
+
+    wrap.classList.remove('hidden');
+    btnCancel.classList.remove('hidden');
+    btnScan.disabled = true;
+
     scanPollTimer = setInterval(async () => {
       try {
-        const s = await api('GET', '/scan/progress');
-        const el = document.getElementById('scan-progress');
+        const s = await api('/scan/progress');
         if (s.running) {
-          el.style.display = 'block';
-          document.getElementById('scan-label').textContent = s.currentFolder || 'Scanning…';
           const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
-          document.getElementById('scan-bar').style.width = pct + '%';
-          document.getElementById('scan-detail').textContent =
-            `${s.done}/${s.total} files — ${s.skipped} skipped — ${s.errors} errors`;
+          bar.style.width = pct + '%';
+          detail.textContent = `${s.done}/${s.total} – ${s.currentFolder || '…'} (${s.skipped} ignorés, ${s.errors} erreurs)`;
         } else {
-          el.style.display = 'none';
-          if (s.finishedAt) {
-            // Scan just finished — refresh stats
-            loadStats();
-            loadCodecChart();
-          }
+          clearInterval(scanPollTimer);
+          scanPollTimer = null;
+          bar.style.width = '100%';
+          detail.textContent = s.cancelled ? 'Scan annulé' : `Terminé — ${s.total} fichiers, ${s.errors} erreurs`;
+          btnCancel.classList.add('hidden');
+          btnScan.disabled = false;
+          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
+          loadDashboard();
         }
-      } catch {}
-    }, 1500);
+      } catch { clearInterval(scanPollTimer); scanPollTimer = null; btnScan.disabled = false; }
+    }, 1000);
   }
 
-  function initDashboard() {
-    document.getElementById('btn-scan').addEventListener('click', async () => {
-      try { await api('POST', '/scan'); toast('Scan started', 'success'); pollScanProgress(); }
-      catch (e) { toast(e.message, 'error'); }
-    });
-    document.getElementById('btn-scan-cancel').addEventListener('click', async () => {
-      try { await api('POST', '/scan/cancel'); toast('Scan cancelled', 'info'); }
-      catch (e) { toast(e.message, 'error'); }
-    });
-    document.getElementById('btn-enrich').addEventListener('click', async () => {
-      try { await api('POST', '/enrich'); toast('Enrichment started', 'success'); }
-      catch (e) { toast(e.message, 'error'); }
-    });
-    document.getElementById('btn-gen-thumbs').addEventListener('click', async () => {
-      try { await api('POST', '/thumbs'); toast('Thumbnail generation started', 'success'); }
-      catch (e) { toast(e.message, 'error'); }
-    });
-  }
+  // Check scan on load
+  api('/scan/progress').then(s => { if (s.running) startScanPoll(); }).catch(() => {});
 
-  /* ═══════════════════════════════════════════════════════════
+  /* ── Enrich / Thumbs ──────────────────────────────────── */
+  $('#btn-enrich').addEventListener('click', async () => {
+    try { await api('/enrich', { method: 'POST' }); toast('Enrichissement lancé', 'success'); } catch (e) { toast(e.message, 'error'); }
+  });
+  $('#btn-gen-thumbs').addEventListener('click', async () => {
+    try { await api('/thumbs', { method: 'POST' }); toast('Génération des miniatures lancée', 'success'); } catch (e) { toast(e.message, 'error'); }
+  });
+
+  /* ═══════════════════════════════════════════════════════
      LIBRARY
-     ═══════════════════════════════════════════════════════════ */
-  let libSearchTimeout = null;
+     ═══════════════════════════════════════════════════════ */
 
-  function initLibrary() {
-    const searchInput = document.getElementById('lib-search');
-    searchInput.addEventListener('input', () => {
-      clearTimeout(libSearchTimeout);
-      libSearchTimeout = setTimeout(() => { libPage = 1; loadLibrary(); }, 300);
-    });
-    document.getElementById('lib-folder').addEventListener('change', () => { libPage = 1; loadLibrary(); });
-    document.getElementById('lib-codec').addEventListener('change', () => { libPage = 1; loadLibrary(); });
-    document.getElementById('lib-sort').addEventListener('change', () => loadLibrary());
-    document.getElementById('lib-order-btn').addEventListener('click', () => {
-      libOrder = libOrder === 'asc' ? 'desc' : 'asc';
-      document.querySelector('#lib-order-btn i').className = `fas fa-sort-amount-${libOrder === 'asc' ? 'up' : 'down'}`;
-      loadLibrary();
-    });
-    document.getElementById('lib-encode-sel').addEventListener('click', openEncodeModal);
-    document.getElementById('lib-sel-all').addEventListener('click', () => {
-      document.querySelectorAll('.video-card').forEach(c => { selectedIds.add(Number(c.dataset.id)); c.classList.add('selected'); });
-      updateSelectionBar();
-    });
-    document.getElementById('lib-sel-none').addEventListener('click', () => {
-      selectedIds.clear();
-      document.querySelectorAll('.video-card').forEach(c => c.classList.remove('selected'));
-      updateSelectionBar();
-    });
+  async function loadFolders() {
+    try {
+      const folders = await api('/folders');
+      const sel = $('#lib-folder');
+      sel.innerHTML = '<option value="">Tous les dossiers</option>';
+      folders.forEach(f => {
+        const o = document.createElement('option');
+        o.value = f.folder;
+        o.textContent = `${f.folder} (${f.count})`;
+        sel.appendChild(o);
+      });
+    } catch {}
   }
 
   async function loadLibrary() {
     try {
-      // Load folders for filter
-      const folders = await api('GET', '/folders');
-      const folderSel = document.getElementById('lib-folder');
-      const curVal = folderSel.value;
-      folderSel.innerHTML = '<option value="">All Folders</option>' +
-        folders.map(f => `<option value="${esc(f.folder)}">${esc(f.folder)} (${f.count})</option>`).join('');
-      folderSel.value = curVal;
+      const q = $('#lib-search').value;
+      const folder = $('#lib-folder').value;
+      const codec = $('#lib-codec').value;
+      const sort = $('#lib-sort').value;
 
-      const q = document.getElementById('lib-search').value;
-      const folder = folderSel.value;
-      const codec = document.getElementById('lib-codec').value;
-      const sort = document.getElementById('lib-sort').value;
-      const params = new URLSearchParams({ q, folder, codec, sort, order: libOrder, page: libPage, limit: 48 });
+      const params = new URLSearchParams({
+        page: libPage, limit: libLimit, sort, order: libOrder,
+      });
+      if (q) params.set('q', q);
+      if (folder) params.set('folder', folder);
+      if (codec) params.set('codec', codec);
 
-      const data = await api('GET', `/videos?${params}`);
-      renderVideoGrid(data.videos);
-      renderPagination(data.page, data.pages);
-    } catch (e) { toast(e.message, 'error'); }
+      const data = await api(`/videos?${params}`);
+      renderLibGrid(data.videos);
+      renderPagination(data.pages, data.page);
+      updateSelectionBar();
+    } catch (e) { toast(`Erreur bibliothèque: ${e.message}`, 'error'); }
   }
 
-  function renderVideoGrid(videos) {
-    document.getElementById('lib-grid').innerHTML = videos.map(v => {
-      const sel = selectedIds.has(v.id) ? 'selected' : '';
-      return `<div class="video-card ${sel}" data-id="${v.id}">
-        <div class="check-overlay"><i class="fas fa-check"></i></div>
-        <img class="video-thumb" src="/api/thumb/${v.id}" onerror="this.src='/img/no-thumb.svg'" alt="">
-        <div class="video-info">
-          <div class="video-name" title="${esc(v.filename)}">${esc(v.filename)}</div>
-          <div class="video-meta">
-            ${codecBadge(v.video_codec)}
-            <span><i class="fas fa-hdd"></i> ${fmtSize(v.size)}</span>
-            <span><i class="fas fa-clock"></i> ${fmtDuration(v.duration)}</span>
-            ${v.width ? `<span>${v.width}x${v.height}</span>` : ''}
+  function renderLibGrid(videos) {
+    const grid = $('#lib-grid');
+    if (!videos.length) {
+      grid.innerHTML = '<div class="mb-empty">Aucune vidéo trouvée</div>';
+      return;
+    }
+    grid.innerHTML = videos.map(v => {
+      const sel = libSelected.has(v.id);
+      return `
+        <div class="mb-card ${sel ? 'mb-selected' : ''}" data-id="${v.id}">
+          <input type="checkbox" class="mb-card-cb" ${sel ? 'checked' : ''}>
+          <img src="/api/thumb/${v.id}" onerror="this.src='/img/no-thumb.svg'" loading="lazy">
+          <span class="mb-card-size">${fmtSize(v.size)}</span>
+          <div class="mb-card-info">
+            <div class="mb-card-name" title="${escHtml(v.filename)}">${escHtml(v.filename)}</div>
+            <div class="mb-card-meta">${v.codec || '?'} · ${v.width ? v.width + '×' + v.height : '?'} · ${fmtDur(v.duration)}</div>
           </div>
-          <div class="video-meta" style="margin-top:4px">
-            <span><i class="fas fa-folder"></i> ${esc(v.folder || '/')}</span>
-          </div>
-        </div>
-      </div>`;
+        </div>`;
     }).join('');
 
-    document.querySelectorAll('.video-card').forEach(card => {
-      card.addEventListener('click', (e) => {
-        const id = Number(card.dataset.id);
-        if (selectedIds.has(id)) { selectedIds.delete(id); card.classList.remove('selected'); }
-        else { selectedIds.add(id); card.classList.add('selected'); }
-        updateSelectionBar();
+    // Click to select
+    $$('.mb-card', grid).forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.tagName === 'INPUT') return; // checkbox handles itself
+        const id = parseInt(card.dataset.id, 10);
+        toggleSelect(id, card);
+      });
+      const cb = card.querySelector('.mb-card-cb');
+      cb.addEventListener('change', () => {
+        const id = parseInt(card.dataset.id, 10);
+        toggleSelect(id, card, cb.checked);
       });
     });
+  }
+
+  function toggleSelect(id, card, force) {
+    const sel = force !== undefined ? force : !libSelected.has(id);
+    if (sel) libSelected.add(id); else libSelected.delete(id);
+    card.classList.toggle('mb-selected', sel);
+    card.querySelector('.mb-card-cb').checked = sel;
+    updateSelectionBar();
   }
 
   function updateSelectionBar() {
-    const bar = document.getElementById('lib-selection-bar');
-    if (selectedIds.size > 0) {
-      bar.style.display = 'flex';
-      document.getElementById('lib-sel-count').textContent = `${selectedIds.size} selected`;
+    const bar = $('#lib-selection-bar');
+    const count = libSelected.size;
+    if (count > 0) {
+      bar.classList.remove('hidden');
+      $('#lib-sel-count').textContent = `${count} sélectionné(s)`;
     } else {
-      bar.style.display = 'none';
+      bar.classList.add('hidden');
     }
   }
 
-  function renderPagination(page, pages) {
-    if (pages <= 1) { document.getElementById('lib-pagination').innerHTML = ''; return; }
-    let html = `<button ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}"><i class="fas fa-chevron-left"></i></button>`;
-    const range = 3;
-    for (let i = 1; i <= pages; i++) {
-      if (i === 1 || i === pages || (i >= page - range && i <= page + range)) {
-        html += `<button class="${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
-      } else if (i === page - range - 1 || i === page + range + 1) {
-        html += '<button disabled>…</button>';
-      }
+  function renderPagination(pages, current) {
+    const wrap = $('#lib-pagination');
+    if (pages <= 1) { wrap.innerHTML = ''; return; }
+    let html = '';
+    for (let p = 1; p <= pages; p++) {
+      html += `<button class="page-btn ${p === current ? 'active' : ''}" data-page="${p}">${p}</button>`;
     }
-    html += `<button ${page >= pages ? 'disabled' : ''} data-page="${page + 1}"><i class="fas fa-chevron-right"></i></button>`;
-    const el = document.getElementById('lib-pagination');
-    el.innerHTML = html;
-    el.querySelectorAll('button[data-page]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        libPage = parseInt(btn.dataset.page, 10);
-        loadLibrary();
-      });
+    wrap.innerHTML = html;
+    $$('.page-btn', wrap).forEach(btn => {
+      btn.addEventListener('click', () => { libPage = parseInt(btn.dataset.page, 10); loadLibrary(); });
     });
   }
 
-  /* ═══════════════════════════════════════════════════════════
-     ENCODE MODAL
-     ═══════════════════════════════════════════════════════════ */
-  function initEncodeModal() {
-    document.getElementById('encode-modal-close').addEventListener('click', closeEncodeModal);
-    document.getElementById('encode-modal-cancel').addEventListener('click', closeEncodeModal);
-    document.getElementById('encode-modal-submit').addEventListener('click', submitEncode);
-  }
-
-  async function openEncodeModal() {
-    if (selectedIds.size === 0) return toast('Select at least one video', 'error');
-    try {
-      const caps = await api('GET', '/encode/capabilities');
-      presets = caps.presets || [];
-      const sel = document.getElementById('encode-preset');
-      sel.innerHTML = presets.map(p => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
-      document.getElementById('encode-modal-info').textContent = `${selectedIds.size} video(s) selected for encoding`;
-      document.getElementById('encode-modal').style.display = 'flex';
-    } catch (e) { toast(e.message, 'error'); }
-  }
-
-  function closeEncodeModal() { document.getElementById('encode-modal').style.display = 'none'; }
-
-  async function submitEncode() {
-    const presetId = document.getElementById('encode-preset').value;
-    const replaceOriginal = document.getElementById('encode-replace').checked;
-    if (!presetId) return toast('Select a preset', 'error');
-    try {
-      const data = await api('POST', '/encode/enqueue', { videoIds: [...selectedIds], presetId, replaceOriginal });
-      toast(`${data.jobs.length} job(s) enqueued`, 'success');
-      closeEncodeModal();
-      selectedIds.clear();
-      updateSelectionBar();
-      document.querySelectorAll('.video-card.selected').forEach(c => c.classList.remove('selected'));
-      switchTab('encode');
-    } catch (e) { toast(e.message, 'error'); }
-  }
-
-  /* ═══════════════════════════════════════════════════════════
-     ENCODE TAB
-     ═══════════════════════════════════════════════════════════ */
-  function initEncodeTab() {
-    document.getElementById('btn-cancel-all').addEventListener('click', async () => {
-      try {
-        const d = await api('POST', '/encode/cancel-all');
-        toast(`${d.cancelled} pending jobs cancelled`, 'info');
-        loadEncodeTab();
-      } catch (e) { toast(e.message, 'error'); }
+  // Library controls
+  $('#lib-search').addEventListener('input', () => {
+    clearTimeout(libSearchTimer);
+    libSearchTimer = setTimeout(() => { libPage = 1; loadLibrary(); }, 350);
+  });
+  ['lib-folder', 'lib-codec', 'lib-sort'].forEach(id => {
+    $(`#${id}`).addEventListener('change', () => { libPage = 1; loadLibrary(); });
+  });
+  $('#lib-order-btn').addEventListener('click', () => {
+    libOrder = libOrder === 'asc' ? 'desc' : 'asc';
+    $('#lib-order-btn').textContent = libOrder === 'asc' ? '↑' : '↓';
+    loadLibrary();
+  });
+  $('#lib-sel-all').addEventListener('click', () => {
+    $$('.mb-card').forEach(c => {
+      const id = parseInt(c.dataset.id, 10);
+      libSelected.add(id);
+      c.classList.add('mb-selected');
+      c.querySelector('.mb-card-cb').checked = true;
     });
-    document.getElementById('btn-set-workers').addEventListener('click', async () => {
-      const count = parseInt(document.getElementById('worker-count').value, 10);
-      try {
-        const d = await api('POST', '/encode/workers', { count });
-        toast(`Workers set to ${d.workers}`, 'success');
-        loadEncodeTab();
-      } catch (e) { toast(e.message, 'error'); }
+    updateSelectionBar();
+  });
+  $('#lib-sel-none').addEventListener('click', () => {
+    libSelected.clear();
+    $$('.mb-card').forEach(c => {
+      c.classList.remove('mb-selected');
+      c.querySelector('.mb-card-cb').checked = false;
     });
-  }
+    updateSelectionBar();
+  });
+  // Encode selected
+  $('#lib-encode-sel').addEventListener('click', () => {
+    if (!libSelected.size) return;
+    openEncodeModal([...libSelected]);
+  });
 
-  async function loadEncodeTab() {
+  /* ═══════════════════════════════════════════════════════
+     ENCODE
+     ═══════════════════════════════════════════════════════ */
+
+  async function loadEncodeQueue() {
     try {
-      const [status, hist] = await Promise.all([
-        api('GET', '/encode/status'),
-        api('GET', '/encode/history?limit=50'),
-      ]);
-
-      document.getElementById('worker-count').value = status.workerCount;
-      document.getElementById('encode-status').innerHTML =
-        `<span class="badge-running">${status.activeJobs} active</span>` +
-        `<span>Workers: ${status.workerCount}</span>` +
-        `<span>${status.running ? '● Running' : '○ Stopped'}</span>`;
-
-      // Show active + pending + recent from history
-      const jobs = (hist.rows || []).filter(j => ['pending', 'encoding'].includes(j.status));
-      const doneJobs = (hist.rows || []).filter(j => !['pending', 'encoding'].includes(j.status)).slice(0, 10);
-
-      document.getElementById('encode-queue').innerHTML =
-        (jobs.length === 0 && doneJobs.length === 0 ? '<p class="text-muted text-center">No encoding jobs</p>' : '') +
-        jobs.map(renderEncodeItem).join('') +
-        (doneJobs.length ? '<h4 style="margin:16px 0 8px;color:var(--text-muted)">Recent</h4>' : '') +
-        doneJobs.map(renderEncodeItem).join('');
-
-      // Wire up action buttons
-      document.querySelectorAll('.job-cancel-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try { await api('POST', `/encode/cancel/${btn.dataset.id}`); loadEncodeTab(); }
-          catch (e) { toast(e.message, 'error'); }
-        });
-      });
-      document.querySelectorAll('.job-retry-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try { await api('POST', `/encode/retry/${btn.dataset.id}`); toast('Job retried', 'success'); loadEncodeTab(); }
-          catch (e) { toast(e.message, 'error'); }
-        });
-      });
-      document.querySelectorAll('.job-delete-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try { await api('DELETE', `/encode/job/${btn.dataset.id}`); loadEncodeTab(); }
-          catch (e) { toast(e.message, 'error'); }
-        });
-      });
-    } catch (e) { toast(e.message, 'error'); }
+      const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=100')]);
+      renderEncodeStatus(status, history.rows);
+    } catch (e) { toast(`Erreur encodage: ${e.message}`, 'error'); }
   }
 
-  function renderEncodeItem(j) {
-    let preset = j.preset_id || '?';
-    try { const p = JSON.parse(j.preset_json); preset = p.label || preset; } catch {}
-    const isActive = j.status === 'encoding';
-    const canCancel = j.status === 'pending' || j.status === 'encoding';
-    const canRetry = j.status === 'failed' || j.status === 'cancelled';
-    return `<div class="encode-item">
-      <span class="job-id">#${j.id}</span>
-      <div class="job-info">
-        <div class="job-name">${esc(j.filename || 'Unknown')}</div>
-        <div class="job-preset">${esc(preset)}</div>
+  function renderEncodeStatus(status, jobs) {
+    // Header stats
+    const header = $('#encode-status');
+    const counts = { pending: 0, encoding: 0, done: 0, error: 0 };
+    (jobs || []).forEach(j => { if (counts.hasOwnProperty(j.status)) counts[j.status]++; });
+
+    header.innerHTML = `
+      <div class="enc-queue-stats">
+        <span class="enc-qs"><span class="dot dot-encoding"></span> En cours : <b>${counts.encoding}</b></span>
+        <span class="enc-qs"><span class="dot dot-pending"></span> En attente : <b>${counts.pending}</b></span>
+        <span class="enc-qs"><span class="dot dot-done"></span> Terminés : <b>${counts.done}</b></span>
+        <span class="enc-qs"><span class="dot dot-error"></span> Erreurs : <b>${counts.error}</b></span>
       </div>
-      ${isActive ? `<div class="job-progress"><div class="progress-bar"><div class="progress-fill" id="job-bar-${j.id}" style="width:0%"></div></div></div><span class="job-pct" id="job-pct-${j.id}">0%</span>` : ''}
-      <div>${statusBadge(j.status)}</div>
-      <div class="job-actions">
-        ${canCancel ? `<button class="btn btn-sm btn-danger job-cancel-btn" data-id="${j.id}" title="Cancel"><i class="fas fa-stop"></i></button>` : ''}
-        ${canRetry  ? `<button class="btn btn-sm btn-secondary job-retry-btn" data-id="${j.id}" title="Retry"><i class="fas fa-redo"></i></button>` : ''}
-        ${!canCancel ? `<button class="btn btn-sm btn-ghost job-delete-btn" data-id="${j.id}" title="Delete"><i class="fas fa-trash"></i></button>` : ''}
-      </div>
-    </div>`;
-  }
+      <div style="font-size:12px;color:var(--a-text-muted)">Workers actifs : ${status.activeJobs}/${status.workerCount}</div>
+    `;
 
-  /* ═══════════════════════════════════════════════════════════
-     HISTORY
-     ═══════════════════════════════════════════════════════════ */
-  function initHistory() {
-    document.getElementById('btn-refresh-history').addEventListener('click', loadHistory);
-  }
-
-  async function loadHistory() {
-    try {
-      const data = await api('GET', '/encode/history?limit=100');
-      if (!data.rows || data.rows.length === 0) {
-        document.getElementById('history-list').innerHTML = '<p class="text-muted text-center">No encoding history yet</p>';
-        return;
-      }
-      document.getElementById('history-list').innerHTML = `
-        <table class="history-table">
-          <thead><tr>
-            <th>#</th><th>File</th><th>Preset</th><th>Status</th><th>Output Size</th><th>Started</th><th>Ended</th><th>Actions</th>
-          </tr></thead>
-          <tbody>
-            ${data.rows.map(j => {
-              let preset = j.preset_id;
-              try { const p = JSON.parse(j.preset_json); preset = p.label || preset; } catch {}
-              return `<tr>
-                <td>${j.id}</td>
-                <td title="${esc(j.file_path || '')}">${esc(j.filename || '?')}</td>
-                <td>${esc(preset)}</td>
-                <td>${statusBadge(j.status)}</td>
-                <td>${j.output_size ? fmtSize(j.output_size) : '—'}</td>
-                <td>${fmtDate(j.started_at)}</td>
-                <td>${fmtDate(j.ended_at)}</td>
-                <td>
-                  ${['failed','cancelled'].includes(j.status) ? `<button class="btn btn-sm btn-ghost job-retry-btn" data-id="${j.id}"><i class="fas fa-redo"></i></button>` : ''}
-                  <button class="btn btn-sm btn-ghost job-delete-btn" data-id="${j.id}"><i class="fas fa-trash"></i></button>
-                </td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>`;
-
-      document.querySelectorAll('.job-retry-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try { await api('POST', `/encode/retry/${btn.dataset.id}`); toast('Job retried', 'success'); loadHistory(); }
-          catch (e) { toast(e.message, 'error'); }
-        });
-      });
-      document.querySelectorAll('.job-delete-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          try { await api('DELETE', `/encode/job/${btn.dataset.id}`); loadHistory(); }
-          catch (e) { toast(e.message, 'error'); }
-        });
-      });
-    } catch (e) { toast(e.message, 'error'); }
-  }
-
-  /* ═══════════════════════════════════════════════════════════
-     HARDWARE
-     ═══════════════════════════════════════════════════════════ */
-  function initHardware() {
-    document.getElementById('btn-hw-refresh').addEventListener('click', () => loadHardware(true));
-  }
-
-  async function loadHardware(refresh = false) {
-    try {
-      const caps = await api('GET', `/encode/capabilities${refresh ? '?refresh=1' : ''}`);
-      presets = caps.presets || [];
-
-      let hwHtml = '';
-      if (caps.nvidia && caps.nvidia.length) {
-        hwHtml += caps.nvidia.map(g => `
-          <div class="hw-card">
-            <h4><i class="fas fa-desktop" style="color:#76b900"></i> NVIDIA GPU ${g.index}</h4>
-            <p class="hw-detail"><strong>Name:</strong> ${esc(g.name)}</p>
-            <p class="hw-detail"><strong>VRAM:</strong> ${esc(g.vram)}</p>
-            <p class="hw-detail"><strong>Driver:</strong> ${esc(g.driver)}</p>
-          </div>`).join('');
-      }
-      if (caps.vaapi && caps.vaapi.length) {
-        hwHtml += caps.vaapi.map(d => `
-          <div class="hw-card">
-            <h4><i class="fas fa-microchip" style="color:#0071c5"></i> VA-API ${esc(d.vendor)}</h4>
-            <p class="hw-detail"><strong>Device:</strong> ${esc(d.device)}</p>
-            <p class="hw-detail"><strong>Driver:</strong> ${esc(d.driver)}</p>
-          </div>`).join('');
-      }
-      if (!caps.nvidia?.length && !caps.vaapi?.length) {
-        hwHtml = '<div class="hw-card"><h4><i class="fas fa-cpu"></i> CPU Only</h4><p class="hw-detail">No hardware encoders detected. CPU encoding available.</p></div>';
-      }
-      document.getElementById('hw-info').innerHTML = hwHtml;
-
-      document.getElementById('hw-presets').innerHTML = caps.presets.map(p => {
-        const typeClass = p.type.includes('nvidia') ? 'type-nvidia' : p.type.includes('vaapi') ? 'type-vaapi' : p.type === 'qsv' ? 'type-qsv' : 'type-cpu';
-        return `<div class="preset-item">
-          <span class="preset-type ${typeClass}">${p.type.toUpperCase()}</span>
-          <span>${esc(p.label)}</span>
-          <span class="preset-id">${p.id}</span>
+    // Jobs list
+    const list = $('#encode-queue');
+    if (!jobs || !jobs.length) {
+      list.innerHTML = '<div class="mb-empty">Aucun job d\'encodage</div>';
+      return;
+    }
+    list.innerHTML = jobs.map(j => {
+      const dotClass = j.status === 'encoding' ? 'dot-encoding' : j.status === 'pending' ? 'dot-pending' : j.status === 'done' ? 'dot-done' : 'dot-error';
+      const fname = j.filename || truncPath(j.file_path) || `#${j.video_id}`;
+      const meta = [j.preset_name || j.preset_id, j.status].filter(Boolean).join(' · ');
+      const showProgress = j.status === 'encoding';
+      const showActions = j.status === 'pending' || j.status === 'error';
+      return `
+        <div class="enc-job" data-jid="${j.id}">
+          <span class="enc-job-status ${dotClass}"></span>
+          <div class="enc-job-info">
+            <div class="enc-job-name" title="${escHtml(fname)}">${escHtml(fname)}</div>
+            <div class="enc-job-meta">${escHtml(meta)}</div>
+          </div>
+          ${showProgress ? `
+            <div class="enc-job-progress">
+              <div class="progress-bar"><div class="progress-fill" style="width:${j._pct || 0}%"></div></div>
+              <div class="enc-job-pct">${j._pct || 0}%</div>
+            </div>` : ''}
+          <div class="enc-job-actions">
+            ${j.status === 'pending' ? `<button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
+            ${j.status === 'error' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
+            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('delete',${j.id})">🗑</button>` : ''}
+          </div>
         </div>`;
-      }).join('') || '<p class="text-muted">No presets available</p>';
+    }).join('');
+  }
 
-      if (refresh) toast('Hardware info refreshed', 'success');
+  // Expose for onclick
+  window.encAction = async function (act, id) {
+    try {
+      if (act === 'cancel') await api(`/encode/cancel/${id}`, { method: 'POST' });
+      else if (act === 'retry') await api(`/encode/retry/${id}`, { method: 'POST' });
+      else if (act === 'delete') await api(`/encode/job/${id}`, { method: 'DELETE' });
+      loadEncodeQueue();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  // SSE handlers
+  function handleJobUpdate(d) {
+    // Refresh encode queue if tab active
+    if ($('#tab-encode').classList.contains('active')) loadEncodeQueue();
+    if (d.status === 'done') {
+      toast(`Encodage terminé : job #${d.id}`, 'success');
+      loadDashboard();
+    } else if (d.status === 'error') {
+      toast(`Erreur encodage : job #${d.id} – ${d.error || ''}`, 'error');
+    }
+  }
+
+  function handleJobProgress(d) {
+    const job = $(`.enc-job[data-jid="${d.id}"]`);
+    if (!job) return;
+    const fill = job.querySelector('.progress-fill');
+    const pctEl = job.querySelector('.enc-job-pct');
+    if (fill) fill.style.width = d.percent + '%';
+    if (pctEl) pctEl.textContent = d.percent + '%';
+  }
+
+  // Workers
+  $('#btn-set-workers').addEventListener('click', async () => {
+    const count = parseInt($('#worker-count').value, 10);
+    if (!count || count < 1 || count > 8) return;
+    try {
+      await api('/encode/workers', { method: 'POST', body: JSON.stringify({ count }) });
+      toast(`Workers réglés à ${count}`, 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+  $('#btn-cancel-all').addEventListener('click', async () => {
+    try {
+      const r = await api('/encode/cancel-all', { method: 'POST' });
+      toast(`${r.cancelled} jobs annulés`, 'info');
+      loadEncodeQueue();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  /* ── Encode Modal ─────────────────────────────────────── */
+  let encodeVideoIds = [];
+
+  function openEncodeModal(videoIds) {
+    encodeVideoIds = videoIds;
+    $('#encode-modal-info').textContent = `${videoIds.length} vidéo(s) sélectionnée(s)`;
+    loadPresetsForModal();
+    $('#encode-modal').style.display = '';
+  }
+
+  async function loadPresetsForModal() {
+    try {
+      const caps = await api('/encode/capabilities');
+      presets = caps.presets || [];
+      const sel = $('#encode-preset');
+      sel.innerHTML = presets.map(p => `<option value="${p.id}">${escHtml(p.label)}</option>`).join('');
     } catch (e) { toast(e.message, 'error'); }
   }
 
-  /* ═══════════════════════════════════════════════════════════
-     LOGS
-     ═══════════════════════════════════════════════════════════ */
-  let logEntries = [];
-  const LOG_MAX = 500;
-
-  function initLogs() {
-    document.getElementById('log-level-filter').addEventListener('change', renderLogs);
-    document.getElementById('log-source-filter').addEventListener('change', renderLogs);
-    document.getElementById('btn-clear-logs').addEventListener('click', () => {
-      logEntries = [];
-      renderLogs();
-    });
-  }
-
-  async function loadLogs() {
+  $('#encode-modal-close').addEventListener('click', () => { $('#encode-modal').style.display = 'none'; });
+  $('#encode-modal-cancel').addEventListener('click', () => { $('#encode-modal').style.display = 'none'; });
+  $('#encode-modal-submit').addEventListener('click', async () => {
+    const presetId = $('#encode-preset').value;
+    const replaceOriginal = $('#encode-replace').checked;
+    if (!presetId) return toast('Sélectionnez un preset', 'warn');
     try {
-      const data = await api('GET', '/logs?limit=200');
-      logEntries = data;
-      renderLogs();
-    } catch {}
+      await api('/encode/enqueue', {
+        method: 'POST',
+        body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal }),
+      });
+      toast(`${encodeVideoIds.length} job(s) ajouté(s)`, 'success');
+      $('#encode-modal').style.display = 'none';
+      libSelected.clear();
+      updateSelectionBar();
+      loadEncodeQueue();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  /* ═══════════════════════════════════════════════════════
+     HARDWARE
+     ═══════════════════════════════════════════════════════ */
+
+  async function loadHardware(refresh) {
+    try {
+      const caps = await api(`/encode/capabilities${refresh ? '?refresh=1' : ''}`);
+      presets = caps.presets || [];
+
+      // Info chips
+      const info = $('#hw-info');
+      let chips = '';
+      if (caps.nvidia) chips += `<span class="hw-chip hw-chip-gpu">🟢 NVIDIA NVENC</span>`;
+      if (caps.vaapi) chips += `<span class="hw-chip hw-chip-vaapi">🔵 VA-API</span>`;
+      if (!caps.nvidia && !caps.vaapi) chips += `<span class="hw-chip hw-chip-cpu">⚪ CPU uniquement (libx265)</span>`;
+      info.innerHTML = chips;
+
+      // Presets list
+      const list = $('#hw-presets');
+      list.innerHTML = presets.map(p => `
+        <div class="enc-job">
+          <span class="enc-job-status" style="background:var(--a-accent)"></span>
+          <div class="enc-job-info">
+            <div class="enc-job-name">${escHtml(p.label)}</div>
+            <div class="enc-job-meta">${escHtml(p.id)} — ${p.encoder || '?'}</div>
+          </div>
+        </div>`).join('');
+    } catch (e) { toast(`Erreur matériel: ${e.message}`, 'error'); }
   }
+
+  $('#btn-hw-refresh').addEventListener('click', () => loadHardware(true));
+
+  /* ═══════════════════════════════════════════════════════
+     LOGS
+     ═══════════════════════════════════════════════════════ */
 
   function addLogEntry(entry) {
     logEntries.push(entry);
-    if (logEntries.length > LOG_MAX) logEntries = logEntries.slice(-LOG_MAX);
-    if (currentTab === 'logs') appendLogDOM(entry);
+    if (logEntries.length > MAX_LOG) logEntries.shift();
+    // Live render if tab open
+    if ($('#tab-logs').classList.contains('active')) appendLogLine(entry);
   }
 
   function renderLogs() {
-    const level = document.getElementById('log-level-filter').value;
-    const source = document.getElementById('log-source-filter').value;
-    let filtered = logEntries;
-    if (level) filtered = filtered.filter(e => e.level === level);
-    if (source) filtered = filtered.filter(e => e.source === source);
-
-    const el = document.getElementById('log-entries');
-    el.innerHTML = filtered.map(logEntryHTML).join('');
-    autoScrollLogs();
+    const box = $('#log-container');
+    box.innerHTML = '';
+    const lvl = $('#log-level-filter').value;
+    const src = $('#log-source-filter').value;
+    const filtered = logEntries.filter(e =>
+      (!lvl || e.level === lvl) && (!src || e.source === src)
+    );
+    filtered.forEach(e => appendLogLine(e, false));
+    if ($('#log-autoscroll').checked) box.scrollTop = box.scrollHeight;
   }
 
-  function appendLogDOM(entry) {
-    const level = document.getElementById('log-level-filter').value;
-    const source = document.getElementById('log-source-filter').value;
-    if (level && entry.level !== level) return;
-    if (source && entry.source !== source) return;
+  function appendLogLine(entry, scroll = true) {
+    const lvl = $('#log-level-filter').value;
+    const src = $('#log-source-filter').value;
+    if (lvl && entry.level !== lvl) return;
+    if (src && entry.source !== src) return;
 
-    const el = document.getElementById('log-entries');
-    el.insertAdjacentHTML('beforeend', logEntryHTML(entry));
-    autoScrollLogs();
+    const box = $('#log-container');
+    const line = document.createElement('div');
+    line.className = `log-line log-${entry.level}`;
+    const ts = entry.ts ? new Date(entry.ts).toLocaleTimeString() : '';
+    line.innerHTML = `<span class="log-ts">${ts}</span><span class="log-src">[${escHtml(entry.source)}]</span>${escHtml(entry.message)}`;
+    box.appendChild(line);
+    if (box.children.length > MAX_LOG) box.removeChild(box.firstChild);
+    if (scroll && $('#log-autoscroll').checked) box.scrollTop = box.scrollHeight;
   }
 
-  function logEntryHTML(e) {
-    const t = new Date(e.ts).toLocaleTimeString();
-    const icons = { debug: 'bug', info: 'info-circle', warn: 'exclamation-triangle', error: 'times-circle', success: 'check-circle' };
-    return `<div class="log-entry log-${e.level}">
-      <span class="log-time">${t}</span>
-      <span class="log-level-badge log-lvl-${e.level}"><i class="fas fa-${icons[e.level] || 'circle'}"></i> ${e.level}</span>
-      <span class="log-source">[${esc(e.source)}]</span>
-      <span class="log-msg">${esc(e.message)}</span>
-    </div>`;
+  // Load initial logs
+  async function loadInitialLogs() {
+    try {
+      const entries = await api('/logs?limit=200');
+      if (Array.isArray(entries)) entries.forEach(e => { logEntries.push(e); });
+    } catch {}
   }
 
-  function autoScrollLogs() {
-    if (!document.getElementById('log-autoscroll').checked) return;
-    const container = document.getElementById('log-container');
-    container.scrollTop = container.scrollHeight;
-  }
-
-  /* ═══════════════════════════════════════════════════════════
-     BOOT
-     ═══════════════════════════════════════════════════════════ */
-  document.addEventListener('DOMContentLoaded', () => {
-    initAuth();
-    initNav();
-    initDashboard();
-    initLibrary();
-    initEncodeModal();
-    initEncodeTab();
-    initHistory();
-    initHardware();
-    initLogs();
-
-    // Check for existing session
-    if (token) {
-      api('GET', '/auth/me').then(() => showApp()).catch(() => logout());
-    }
+  $('#log-level-filter').addEventListener('change', renderLogs);
+  $('#log-source-filter').addEventListener('change', renderLogs);
+  $('#btn-clear-logs').addEventListener('click', () => {
+    logEntries.length = 0;
+    $('#log-container').innerHTML = '';
   });
+
+  /* ═══════════════════════════════════════════════════════
+     INIT
+     ═══════════════════════════════════════════════════════ */
+
+  loadInitialLogs();
+  initAuth();
+
 })();
