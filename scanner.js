@@ -258,7 +258,7 @@ async function enrichVideoMeta(concurrency = 3) {
 }
 
 /* ── Post-scan: generate missing thumbnails ──────────────── */
-async function generateMissingThumbs(limit = 500, concurrency = 3) {
+async function generateMissingThumbs(limit = 5000, concurrency = 4) {
   try {
     const [rows] = await pool.query(
       'SELECT id, file_path FROM videos WHERE thumb_path IS NULL ORDER BY id DESC LIMIT ?', [limit]

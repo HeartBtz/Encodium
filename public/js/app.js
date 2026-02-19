@@ -265,6 +265,19 @@
     try { await api('/thumbs', { method: 'POST' }); toast('Génération des miniatures lancée', 'success'); } catch (e) { toast(e.message, 'error'); }
   });
 
+  /* ── Clear DB ──────────────────────────────────────────── */
+  $('#btn-clear-db').addEventListener('click', async () => {
+    if (!confirm('⚠️ Êtes-vous sûr de vouloir vider toute la base de données ?\nCette action est irréversible.')) return;
+    try {
+      await api('/clear', { method: 'POST' });
+      toast('Base de données vidée', 'success');
+      libSelected.clear();
+      loadDashboard();
+      loadFolders();
+      loadLibrary();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
   /* ═══════════════════════════════════════════════════════
      LIBRARY
      ═══════════════════════════════════════════════════════ */
