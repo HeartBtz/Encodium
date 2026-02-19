@@ -252,7 +252,7 @@ async function enrichVideoMeta(concurrency = 3) {
   if (enrichProgress.running) { logger.warn('enrich', 'Enrichment already in progress'); return; }
   try {
     const [rows] = await pool.query(
-      "SELECT id, file_path FROM videos WHERE codec IS NULL OR duration IS NULL LIMIT 2000"
+      "SELECT id, file_path FROM videos WHERE codec IS NULL OR duration IS NULL"
     );
     if (!rows.length) { logger.info('enrich', 'No videos to enrich — all up to date'); return; }
     enrichProgress = { running: true, total: rows.length, done: 0, errors: 0, startedAt: new Date().toISOString(), finishedAt: null };
