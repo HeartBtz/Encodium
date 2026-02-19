@@ -98,6 +98,8 @@
     loadDashboard();
     loadFolders();
     checkScanOnLoad();
+    checkEnrichOnLoad();
+    checkThumbsOnLoad();
     switchTab('dashboard');
   }
 
@@ -258,12 +260,92 @@
   }
 
   /* ── Enrich / Thumbs ──────────────────────────────────── */
+  let enrichPollTimer = null;
+  let thumbsPollTimer = null;
+
   $('#btn-enrich').addEventListener('click', async () => {
-    try { await api('/enrich', { method: 'POST' }); toast('Enrichissement lancé', 'success'); } catch (e) { toast(e.message, 'error'); }
+    try {
+      await api('/enrich', { method: 'POST' });
+      toast('Enrichissement lancé', 'success');
+      startEnrichPoll();
+    } catch (e) { toast(e.message, 'error'); }
   });
+
   $('#btn-gen-thumbs').addEventListener('click', async () => {
-    try { await api('/thumbs', { method: 'POST' }); toast('Génération des miniatures lancée', 'success'); } catch (e) { toast(e.message, 'error'); }
+    try {
+      await api('/thumbs', { method: 'POST' });
+      toast('Génération des miniatures lancée', 'success');
+      startThumbsPoll();
+    } catch (e) { toast(e.message, 'error'); }
   });
+
+  function startEnrichPoll() {
+    if (enrichPollTimer) return;
+    const wrap = $('#enrich-progress');
+    const bar = $('#enrich-bar');
+    const detail = $('#enrich-detail');
+    const btn = $('#btn-enrich');
+
+    wrap.classList.remove('hidden');
+    btn.disabled = true;
+
+    enrichPollTimer = setInterval(async () => {
+      try {
+        const s = await api('/enrich/progress');
+        if (s.running) {
+          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
+          bar.style.width = pct + '%';
+          detail.textContent = `${s.done}/${s.total} (${s.errors} erreurs)`;
+        } else {
+          clearInterval(enrichPollTimer);
+          enrichPollTimer = null;
+          bar.style.width = '100%';
+          detail.textContent = `Terminé — ${s.total} vidéos, ${s.errors} erreurs`;
+          btn.disabled = false;
+          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
+          loadDashboard();
+        }
+      } catch { clearInterval(enrichPollTimer); enrichPollTimer = null; btn.disabled = false; }
+    }, 1000);
+  }
+
+  function startThumbsPoll() {
+    if (thumbsPollTimer) return;
+    const wrap = $('#thumbs-progress');
+    const bar = $('#thumbs-bar');
+    const detail = $('#thumbs-detail');
+    const btn = $('#btn-gen-thumbs');
+
+    wrap.classList.remove('hidden');
+    btn.disabled = true;
+
+    thumbsPollTimer = setInterval(async () => {
+      try {
+        const s = await api('/thumbs/progress');
+        if (s.running) {
+          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
+          bar.style.width = pct + '%';
+          detail.textContent = `${s.done}/${s.total} (${s.errors} erreurs)`;
+        } else {
+          clearInterval(thumbsPollTimer);
+          thumbsPollTimer = null;
+          bar.style.width = '100%';
+          detail.textContent = `Terminé — ${s.total} miniatures, ${s.errors} erreurs`;
+          btn.disabled = false;
+          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
+          loadDashboard();
+        }
+      } catch { clearInterval(thumbsPollTimer); thumbsPollTimer = null; btn.disabled = false; }
+    }, 1000);
+  }
+
+  // Check enrich/thumbs on load (resume progress bars if running)
+  function checkEnrichOnLoad() {
+    api('/enrich/progress').then(s => { if (s.running) startEnrichPoll(); }).catch(() => {});
+  }
+  function checkThumbsOnLoad() {
+    api('/thumbs/progress').then(s => { if (s.running) startThumbsPoll(); }).catch(() => {});
+  }
 
   /* ── Clear DB ──────────────────────────────────────────── */
   $('#btn-clear-db').addEventListener('click', async () => {

@@ -37,7 +37,16 @@ let scanProgress = {
 };
 let cancelRequested = false;
 
+/* ── Enrich state ────────────────────────────────────────── */
+let enrichProgress = { running: false, total: 0, done: 0, errors: 0, startedAt: null, finishedAt: null };
+
+/* ── Thumbs state ────────────────────────────────────────── */
+let thumbsProgress = { running: false, total: 0, done: 0, errors: 0, startedAt: null, finishedAt: null };
+
 function getProgress() { return { ...scanProgress }; }
+function getEnrichProgress() { return { ...enrichProgress }; }
+function getThumbsProgress() { return { ...thumbsProgress }; }
+
 function cancelScan() {
   if (!scanProgress.running) return false;
   cancelRequested = true;
@@ -240,44 +249,63 @@ async function scanDirectory(onProgress = null) {
 /* ── Post-scan: enrich metadata with ffprobe ─────────────── */
 async function enrichVideoMeta(concurrency = 3) {
   if (!ffmpeg) return;
+  if (enrichProgress.running) { logger.warn('enrich', 'Enrichment already in progress'); return; }
   try {
     const [rows] = await pool.query(
       "SELECT id, file_path FROM videos WHERE codec IS NULL OR duration IS NULL LIMIT 2000"
     );
     if (!rows.length) { logger.info('enrich', 'No videos to enrich — all up to date'); return; }
+    enrichProgress = { running: true, total: rows.length, done: 0, errors: 0, startedAt: new Date().toISOString(), finishedAt: null };
     logger.info('enrich', `Enriching metadata for ${rows.length} video(s)…`);
     const tasks = rows.map(row => async () => {
       try {
         const meta = await getVideoMeta(row.file_path);
         if (meta) await updateVideoMeta(row.id, meta);
-      } catch {}
+      } catch { enrichProgress.errors++; }
+      enrichProgress.done++;
     });
     await runConcurrent(tasks, concurrency);
-    logger.success('enrich', `Metadata enrichment complete (${rows.length} videos)`);
-  } catch (e) { logger.error('enrich', `Enrichment failed: ${e.message}`); }
+    enrichProgress.running = false;
+    enrichProgress.finishedAt = new Date().toISOString();
+    logger.success('enrich', `Metadata enrichment complete (${rows.length} videos, ${enrichProgress.errors} errors)`);
+  } catch (e) {
+    enrichProgress.running = false;
+    enrichProgress.finishedAt = new Date().toISOString();
+    logger.error('enrich', `Enrichment failed: ${e.message}`);
+  }
 }
 
 /* ── Post-scan: generate missing thumbnails ──────────────── */
 async function generateMissingThumbs(limit = 5000, concurrency = 4) {
+  if (thumbsProgress.running) { logger.warn('thumbs', 'Thumbnail generation already in progress'); return; }
   try {
     const [rows] = await pool.query(
       'SELECT id, file_path FROM videos WHERE thumb_path IS NULL ORDER BY id DESC LIMIT ?', [limit]
     );
     if (!rows.length) { logger.info('thumbs', 'No thumbnails to generate — all up to date'); return; }
+    thumbsProgress = { running: true, total: rows.length, done: 0, errors: 0, startedAt: new Date().toISOString(), finishedAt: null };
     logger.info('thumbs', `Generating ${rows.length} thumbnail(s)…`);
     const tasks = rows.map(v => async () => {
       try {
         const tp = await generateThumb(v.file_path, v.id);
         if (tp) await updateVideoThumb(v.id, tp);
-      } catch {}
+      } catch { thumbsProgress.errors++; }
+      thumbsProgress.done++;
     });
     await runConcurrent(tasks, concurrency);
-    logger.success('thumbs', `Thumbnail generation complete (${rows.length} videos)`);
-  } catch (e) { logger.error('thumbs', `Thumbnail generation failed: ${e.message}`); }
+    thumbsProgress.running = false;
+    thumbsProgress.finishedAt = new Date().toISOString();
+    logger.success('thumbs', `Thumbnail generation complete (${rows.length} videos, ${thumbsProgress.errors} errors)`);
+  } catch (e) {
+    thumbsProgress.running = false;
+    thumbsProgress.finishedAt = new Date().toISOString();
+    logger.error('thumbs', `Thumbnail generation failed: ${e.message}`);
+  }
 }
 
 module.exports = {
   MEDIA_DIR, THUMB_DIR, VIDEO_EXTS,
   scanDirectory, getProgress, cancelScan,
   getState, enrichVideoMeta, generateMissingThumbs, generateThumb,
+  getEnrichProgress, getThumbsProgress,
 };

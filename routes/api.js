@@ -66,6 +66,8 @@ router.post('/scan/cancel', requireAuth, (req, res) => {
 
 router.post('/enrich', requireAuth, async (req, res) => {
   try {
+    const enrichState = scanner.getEnrichProgress();
+    if (enrichState.running) return res.status(409).json({ error: 'Enrichment already in progress' });
     const state = scanner.getState();
     if (state.running) return res.status(409).json({ error: 'Scan in progress' });
     logger.info('enrich', 'Metadata enrichment triggered by user');
@@ -74,12 +76,22 @@ router.post('/enrich', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+router.get('/enrich/progress', requireAuth, (req, res) => {
+  res.json(scanner.getEnrichProgress());
+});
+
 router.post('/thumbs', requireAuth, async (req, res) => {
   try {
+    const thumbsState = scanner.getThumbsProgress();
+    if (thumbsState.running) return res.status(409).json({ error: 'Thumbnail generation already in progress' });
     logger.info('thumbs', 'Thumbnail generation triggered by user');
     scanner.generateMissingThumbs().catch(e => logger.error('thumbs', `Thumbs error: ${e.message}`));
     res.json({ message: 'Thumbnail generation started' });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/thumbs/progress', requireAuth, (req, res) => {
+  res.json(scanner.getThumbsProgress());
 });
 
 /* ═══════════════════════════════════════════════════════════════

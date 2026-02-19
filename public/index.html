@@ -117,6 +117,10 @@
             <div><h3>Enrichir les métadonnées</h3><p class="muted">Extrait codec, durée, résolution via ffprobe.</p></div>
           </div>
           <div class="card-actions"><button class="btn btn-primary" id="btn-enrich">▶ Enrichir</button></div>
+          <div id="enrich-progress" class="progress-wrap hidden">
+            <div class="progress-bar"><div class="progress-fill" id="enrich-bar"></div></div>
+            <span id="enrich-detail"></span>
+          </div>
         </div>
 
         <div class="admin-card">
@@ -125,6 +129,10 @@
             <div><h3>Générer les miniatures</h3><p class="muted">Crée les thumbnails manquantes.</p></div>
           </div>
           <div class="card-actions"><button class="btn btn-primary" id="btn-gen-thumbs">▶ Générer</button></div>
+          <div id="thumbs-progress" class="progress-wrap hidden">
+            <div class="progress-bar"><div class="progress-fill" id="thumbs-bar"></div></div>
+            <span id="thumbs-detail"></span>
+          </div>
         </div>
 
         <div class="admin-card">
