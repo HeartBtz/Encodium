@@ -34,10 +34,16 @@
     if (token) headers.Authorization = `Bearer ${token}`;
     return fetch(`/api${path}`, { ...opts, headers })
       .then(async r => {
-        if (r.status === 401) { logout(); throw new Error('Session expired'); }
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error || `Error ${r.status}`);
+        if (r.status === 401) { logout(); throw new Error('Session expirée'); }
+        let j;
+        try { j = await r.json(); } catch { throw new Error(`Réponse invalide (${r.status})`); }
+        if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
         return j;
+      })
+      .catch(err => {
+        if (err.message === 'Session expirée') throw err;
+        if (err.name === 'TypeError') throw new Error('Connexion au serveur impossible');
+        throw err;
       });
   }
 
@@ -88,8 +94,10 @@
     $('#app').style.display = '';
     $('#adminUser').textContent = currentUser.email;
     connectSSE();
+    loadInitialLogs();
     loadDashboard();
     loadFolders();
+    checkScanOnLoad();
     switchTab('dashboard');
   }
 
@@ -126,9 +134,12 @@
   $('#btn-logout').addEventListener('click', logout);
 
   /* ── SSE ──────────────────────────────────────────────── */
+  let sseRetries = 0;
   function connectSSE() {
     if (sse) sse.close();
+    if (!token) return;
     sse = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+    sse.addEventListener('connected', () => { sseRetries = 0; });
     sse.addEventListener('job_update', e => {
       try { handleJobUpdate(JSON.parse(e.data)); } catch {}
     });
@@ -138,7 +149,13 @@
     sse.addEventListener('log', e => {
       try { addLogEntry(JSON.parse(e.data)); } catch {}
     });
-    sse.onerror = () => { setTimeout(() => { if (token) connectSSE(); }, 5000); };
+    sse.onerror = () => {
+      sse.close(); sse = null;
+      sseRetries++;
+      if (token && sseRetries < 10) {
+        setTimeout(() => connectSSE(), Math.min(sseRetries * 3000, 30000));
+      }
+    };
   }
 
   /* ── Tab switching ────────────────────────────────────── */
@@ -235,8 +252,10 @@
     }, 1000);
   }
 
-  // Check scan on load
-  api('/scan/progress').then(s => { if (s.running) startScanPoll(); }).catch(() => {});
+  // Check scan on load (called from showApp)
+  function checkScanOnLoad() {
+    api('/scan/progress').then(s => { if (s.running) startScanPoll(); }).catch(() => {});
+  }
 
   /* ── Enrich / Thumbs ──────────────────────────────────── */
   $('#btn-enrich').addEventListener('click', async () => {
@@ -624,7 +643,6 @@
      INIT
      ═══════════════════════════════════════════════════════ */
 
-  loadInitialLogs();
   initAuth();
 
 })();

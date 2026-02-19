@@ -20,16 +20,22 @@ const app  = express();
 
 /* ─── Security & middleware ───────────────────────────────── */
 app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+}));
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
-app.use(rateLimit({ windowMs: 60_000, max: 300, standardHeaders: true, legacyHeaders: false }));
+
+const apiLimiter = rateLimit({ windowMs: 60_000, max: 600, standardHeaders: true, legacyHeaders: false });
 
 /* ─── Static files ────────────────────────────────────────── */
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ─── API ─────────────────────────────────────────────────── */
-app.use('/api', api);
+app.use('/api', apiLimiter, api);
 
 /* ─── SPA fallback ────────────────────────────────────────── */
 app.get('*', (req, res) => {
