@@ -124,8 +124,12 @@ router.get('/videos', requireAuth, async (req, res) => {
       params.push(folder);
     }
     if (codec) {
-      where.push('v.codec = ?');
-      params.push(codec);
+      if (codec === 'unknown') {
+        where.push('(v.codec IS NULL OR v.codec = "")');
+      } else {
+        where.push('v.codec = ?');
+        params.push(codec);
+      }
     }
 
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
