@@ -153,6 +153,9 @@
     sse.addEventListener('job_progress', e => {
       try { handleJobProgress(JSON.parse(e.data)); } catch {}
     });
+    sse.addEventListener('smartshrink_progress', e => {
+      try { handleSmartShrinkProgress(JSON.parse(e.data)); } catch {}
+    });
     sse.addEventListener('log', e => {
       try { addLogEntry(JSON.parse(e.data)); } catch {}
     });
@@ -652,6 +655,9 @@
     list.innerHTML = jobs.map(j => {
       const dotClass = j.status === 'encoding' ? 'dot-encoding' : j.status === 'pending' ? 'dot-pending' : j.status === 'done' ? 'dot-done' : 'dot-error';
       const fname = j.filename || truncPath(j.file_path) || `#${j.video_id}`;
+      const isSmartShrink = (j.preset_id || '').startsWith('smartshrink_');
+      const ssBadge = isSmartShrink ? '<span class="ss-badge">🧠 SmartShrink</span> ' : '';
+      const qualityBadge = isSmartShrink && j.quality ? `<span class="ss-quality">${escHtml(j.quality)}</span> ` : '';
       const meta = [j.preset_name || j.preset_id, j.status].filter(Boolean).join(' · ');
       const showProgress = j.status === 'encoding';
       const showActions = j.status === 'pending' || j.status === 'error';
@@ -660,7 +666,7 @@
           <span class="enc-job-status ${dotClass}"></span>
           <div class="enc-job-info">
             <div class="enc-job-name" title="${escHtml(fname)}">${escHtml(fname)}</div>
-            <div class="enc-job-meta">${escHtml(meta)}</div>
+            <div class="enc-job-meta">${ssBadge}${qualityBadge}${escHtml(meta)}</div>
           </div>
           ${showProgress ? `
             <div class="enc-job-progress">
@@ -738,6 +744,22 @@
     if (pctEl) pctEl.textContent = d.percent + '%';
   }
 
+  function handleSmartShrinkProgress(d) {
+    const job = $(`.enc-job[data-jid="${d.id}"]`);
+    if (!job) return;
+    const pctEl = job.querySelector('.enc-job-pct');
+    if (d.done) {
+      if (pctEl) pctEl.textContent = `CRF ${d.optimalCRF}`;
+      return;
+    }
+    if (pctEl) {
+      const ssimText = d.ssim ? ` SSIM=${d.ssim.toFixed(4)}` : '';
+      pctEl.textContent = `🧠 ${d.iteration}/${d.maxIterations} CRF=${d.crf}${ssimText}`;
+    }
+    const fill = job.querySelector('.progress-fill');
+    if (fill) fill.style.width = Math.round((d.iteration / d.maxIterations) * 100) + '%';
+  }
+
   // Workers
   $('#btn-set-workers').addEventListener('click', async () => {
     const count = parseInt($('#worker-count').value, 10);
@@ -771,7 +793,18 @@
       presets = caps.presets || [];
       const sel = $('#encode-preset');
       sel.innerHTML = presets.map(p => `<option value="${p.id}">${escHtml(p.label)}</option>`).join('');
+      // Toggle SmartShrink quality selector
+      sel.addEventListener('change', toggleSmartShrinkQuality);
+      toggleSmartShrinkQuality();
     } catch (e) { toast(e.message, 'error'); }
+  }
+
+  function toggleSmartShrinkQuality() {
+    const sel = $('#encode-preset');
+    const group = $('#smartshrink-quality-group');
+    if (!sel || !group) return;
+    const isSmartShrink = sel.value.startsWith('smartshrink_');
+    group.style.display = isSmartShrink ? '' : 'none';
   }
 
   $('#encode-modal-close').addEventListener('click', () => { $('#encode-modal').style.display = 'none'; });
@@ -779,11 +812,12 @@
   $('#encode-modal-submit').addEventListener('click', async () => {
     const presetId = $('#encode-preset').value;
     const replaceOriginal = $('#encode-replace').checked;
+    const quality = presetId.startsWith('smartshrink_') ? ($('#encode-quality')?.value || 'good') : undefined;
     if (!presetId) return toast('Sélectionnez un preset', 'warn');
     try {
       await api('/encode/enqueue', {
         method: 'POST',
-        body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal }),
+        body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal, quality }),
       });
       toast(`${encodeVideoIds.length} job(s) ajouté(s)`, 'success');
       $('#encode-modal').style.display = 'none';

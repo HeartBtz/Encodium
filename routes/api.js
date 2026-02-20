@@ -322,11 +322,11 @@ router.get('/encode/history', requireAuth, async (req, res) => {
 
 router.post('/encode/enqueue', requireAuth, async (req, res) => {
   try {
-    const { videoIds, presetId, replaceOriginal } = req.body;
+    const { videoIds, presetId, replaceOriginal, quality } = req.body;
     if (!presetId) return res.status(400).json({ error: 'presetId required' });
     const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
     if (!ids.length) return res.status(400).json({ error: 'videoIds required' });
-    const jobIds = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal);
+    const jobIds = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, quality || 'good');
     res.json({ jobs: jobIds });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
