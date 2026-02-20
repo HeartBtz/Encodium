@@ -14,6 +14,7 @@
   let libPage = 1;
   const libLimit = 50;
   let libTotal = 0;
+  let lastClickedCardIdx = -1;
   let libOrder = 'asc';
   let libSelected = new Set();
   let libSearchTimer = null;
@@ -576,16 +577,32 @@
     }).join('');
 
     // Click to select
-    $$('.mb-card', grid).forEach(card => {
+    const cards = $$('.mb-card', grid);
+    cards.forEach((card, idx) => {
       card.addEventListener('click', e => {
         if (e.target.tagName === 'INPUT' || e.target.classList.contains('mb-play-btn')) return;
         const id = parseInt(card.dataset.id, 10);
-        toggleSelect(id, card);
+        if (e.shiftKey && lastClickedCardIdx >= 0) {
+          const from = Math.min(lastClickedCardIdx, idx);
+          const to = Math.max(lastClickedCardIdx, idx);
+          for (let i = from; i <= to; i++) {
+            const c = cards[i];
+            const cid = parseInt(c.dataset.id, 10);
+            libSelected.add(cid);
+            c.classList.add('mb-selected');
+            c.querySelector('.mb-card-cb').checked = true;
+          }
+          updateSelectionBar();
+        } else {
+          toggleSelect(id, card);
+        }
+        lastClickedCardIdx = idx;
       });
       const cb = card.querySelector('.mb-card-cb');
       cb.addEventListener('change', () => {
         const id = parseInt(card.dataset.id, 10);
         toggleSelect(id, card, cb.checked);
+        lastClickedCardIdx = idx;
       });
     });
 
