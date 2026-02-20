@@ -135,6 +135,8 @@ async function initSchema() {
     await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN encode_options TEXT AFTER quality");
     // v1.1 — job priority
     await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN priority INT DEFAULT 0 AFTER replace_original");
+    // v1.2 — encode_skip flag on videos (size guard hit)
+    await safeAlter(conn, "ALTER TABLE videos ADD COLUMN encode_skip TINYINT DEFAULT 0 COMMENT 'set when encode output was larger than original'");
 
     // ── Encoding Savings Ledger (persistent, survives queue clears) ──
     await conn.query(`

@@ -375,7 +375,7 @@ router.get('/encode/history', requireAuth, async (req, res) => {
 
 router.post('/encode/enqueue', requireAuth, async (req, res) => {
   try {
-    let { videoIds, presetId, replaceOriginal, container, downscale, tonemap } = req.body;
+    let { videoIds, presetId, replaceOriginal, container, downscale, tonemap, force } = req.body;
     if (!presetId) return res.status(400).json({ error: 'presetId required' });
     const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
     if (!ids.length) return res.status(400).json({ error: 'videoIds required' });
@@ -399,7 +399,7 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
       tonemap = !!cp.tonemap;
     }
 
-    const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap };
+    const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap, force: !!force };
     const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, opts);
     res.json({ jobs: result.jobs, skipped: result.skipped });
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -441,6 +441,18 @@ router.post('/encode/workers', requireAuth, (req, res) => {
   if (!count || count < 1 || count > 8) return res.status(400).json({ error: 'count 1-8' });
   const n = encoder.setWorkerCount(count);
   res.json({ workers: n });
+});
+
+/* Clear encode_skip flag for given video ids */
+router.post('/videos/clear-skip', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+    const pool = db.getPool();
+    const ph = ids.map(() => '?').join(',');
+    const [result] = await pool.query(`UPDATE videos SET encode_skip = 0 WHERE id IN (${ph})`, ids);
+    res.json({ cleared: result.affectedRows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /* Job log endpoint — returns detailed per-job ffmpeg log */

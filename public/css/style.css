@@ -330,6 +330,12 @@ body {
   background: rgba(0,0,0,.75); color: #ccc;
   font-size: 9px; padding: 1px 5px; border-radius: 3px; pointer-events: none;
 }
+.mb-card-skip {
+  position: absolute; top: 4px; left: 24px;
+  background: rgba(234,179,8,.85); color: #111;
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; pointer-events: none;
+  z-index: 1;
+}
 .mb-card-cb {
   position: absolute; top: 4px; left: 4px;
   width: 15px; height: 15px; accent-color: var(--a-accent); cursor: pointer;

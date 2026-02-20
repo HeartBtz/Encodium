@@ -678,6 +678,8 @@ async function processJob(job) {
       logger.warn('encoder', `Job #${job.id}: ${msg}`);
       try { await fsp.unlink(tmpFile); } catch {}
       tmpFile = null; // prevent double-unlink in finally
+      // Flag video so it won't be re-encoded by accident
+      await pool.query('UPDATE videos SET encode_skip = 1 WHERE id = ?', [job.video_id]);
       await pool.query(
         "UPDATE encode_jobs SET status='done', output_path=NULL, output_size=0, error=?, ended_at=NOW() WHERE id=?",
         [`Skipped: output larger than original (+${pctBigger}%)`, job.id]
@@ -1003,13 +1005,14 @@ async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
   const container = (typeof opts === 'object') ? (opts.container || 'auto') : 'auto';
   const downscale = (typeof opts === 'object') ? (opts.downscale || '') : '';
   const tonemap = (typeof opts === 'object') ? (!!opts.tonemap) : false;
+  const force = (typeof opts === 'object') ? (!!opts.force) : false;
 
   const caps = await gpuDetect.detectAll();
   const preset = caps.presets.find(p => p.id === presetId);
   if (!preset) throw new Error(`Unknown preset: ${presetId}`);
 
   const pool = db.getPool();
-  const [[video]] = await pool.query('SELECT size, codec FROM videos WHERE id=?', [video_id]);
+  const [[video]] = await pool.query('SELECT size, codec, encode_skip FROM videos WHERE id=?', [video_id]);
   if (!video) throw new Error(`Video ${video_id} not found`);
   const fileSize = video.size || 0;
 
@@ -1023,6 +1026,17 @@ async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
   if (codecMatch) {
     logger.info('encoder', `Skip video ${video_id}: already ${currentCodec} (target: ${targetCodec})`);
     return { skipped: true, video_id, reason: `already ${currentCodec}` };
+  }
+
+  // ── Skip videos flagged by size guard (unless force) ──
+  if (video.encode_skip && !force) {
+    logger.info('encoder', `Skip video ${video_id}: previously flagged (encode output was larger)`);
+    return { skipped: true, video_id, reason: 'encodage ignoré (résultat plus gros)' };
+  }
+
+  // Clear skip flag when explicitly encoding (force or first attempt)
+  if (video.encode_skip && force) {
+    await pool.query('UPDATE videos SET encode_skip = 0 WHERE id = ?', [video_id]);
   }
 
   const encodeOpts = JSON.stringify({ container, downscale, tonemap });

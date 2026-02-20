@@ -565,6 +565,7 @@
             <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="Lire">▶</button>
           </div>
           <span class="mb-card-size">${fmtSize(v.size)}</span>
+          ${v.encode_skip ? '<span class="mb-card-skip" title="Encodage ignoré (résultat plus gros)">⚠ skip</span>' : ''}
           <div class="mb-card-info">
             <div class="mb-card-name" title="${escHtml(v.filename)}">${escHtml(v.filename)}</div>
             <div class="mb-card-meta">${v.codec || '?'} · ${v.width ? v.width + '×' + v.height : '?'} · ${fmtDur(v.duration)}</div>
@@ -660,8 +661,16 @@
     updateSelectionBar();
   });
   // Encode selected
+  let forceEncodeFlag = false;
   $('#lib-encode-sel').addEventListener('click', () => {
     if (!libSelected.size) return;
+    forceEncodeFlag = false;
+    openEncodeModal([...libSelected]);
+  });
+  // Force encode (skip-flagged videos)
+  $('#lib-force-encode-sel').addEventListener('click', () => {
+    if (!libSelected.size) return;
+    forceEncodeFlag = true;
     openEncodeModal([...libSelected]);
   });
   // Delete selected
@@ -911,8 +920,8 @@
     } catch (e) { toast(e.message, 'error'); }
   }
 
-  $('#encode-modal-close').addEventListener('click', () => { $('#encode-modal').style.display = 'none'; });
-  $('#encode-modal-cancel').addEventListener('click', () => { $('#encode-modal').style.display = 'none'; });
+  $('#encode-modal-close').addEventListener('click', () => { forceEncodeFlag = false; $('#encode-modal').style.display = 'none'; });
+  $('#encode-modal-cancel').addEventListener('click', () => { forceEncodeFlag = false; $('#encode-modal').style.display = 'none'; });
   $('#encode-modal-submit').addEventListener('click', async () => {
     const presetId = $('#encode-preset').value;
     const replaceOriginal = $('#encode-replace').checked;
@@ -923,7 +932,7 @@
     try {
       const r = await api('/encode/enqueue', {
         method: 'POST',
-        body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal, container, downscale, tonemap }),
+        body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal, container, downscale, tonemap, force: forceEncodeFlag }),
       });
       const nJobs = (r.jobs || []).length;
       const nSkipped = (r.skipped || []).length;
@@ -931,6 +940,7 @@
       if (nSkipped > 0) msg += `, ${nSkipped} ignoré(s) (déjà dans le codec cible)`;
       toast(msg, nJobs > 0 ? 'success' : 'info');
       $('#encode-modal').style.display = 'none';
+      forceEncodeFlag = false;
       libSelected.clear();
       updateSelectionBar();
       loadEncodeQueue();
