@@ -8,6 +8,7 @@ const router   = express.Router();
 const bcrypt   = require('bcryptjs');
 const path     = require('path');
 const fs       = require('fs');
+const fsp      = require('fs/promises');
 
 const db         = require('../db');
 const scanner    = require('../scanner');
@@ -191,18 +192,21 @@ router.post('/videos/delete', requireAuth, async (req, res) => {
     for (const v of rows) {
       // Delete physical file
       if (v.file_path) {
-        try { fs.unlinkSync(v.file_path); } catch (e) {
+        try { await fsp.unlink(v.file_path); } catch (e) {
           if (e.code !== 'ENOENT') fileErrors.push({ id: v.id, error: e.message });
         }
       }
       // Delete thumbnail
       const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${v.id}.jpg`);
-      try { fs.unlinkSync(thumbPath); } catch {}
-      // Delete from DB
-      await pool.query('DELETE FROM videos WHERE id = ?', [v.id]);
-      // Also delete any encode jobs referencing this video
-      await pool.query('DELETE FROM encode_jobs WHERE video_id = ?', [v.id]);
+      try { await fsp.unlink(thumbPath); } catch {}
       deleted++;
+    }
+    // Batch delete from DB (cascade handles encode_jobs via FK)
+    if (deleted > 0) {
+      const delIds = rows.map(v => v.id);
+      const ph = delIds.map(() => '?').join(',');
+      await pool.query(`DELETE FROM encode_jobs WHERE video_id IN (${ph})`, delIds);
+      await pool.query(`DELETE FROM videos WHERE id IN (${ph})`, delIds);
     }
     logger.info('api', `Deleted ${deleted} video(s) (requested: ${ids.length})`);
     res.json({ deleted, fileErrors });
@@ -371,7 +375,7 @@ router.get('/encode/history', requireAuth, async (req, res) => {
 
 router.post('/encode/enqueue', requireAuth, async (req, res) => {
   try {
-    let { videoIds, presetId, replaceOriginal, quality, container, downscale, tonemap } = req.body;
+    let { videoIds, presetId, replaceOriginal, container, downscale, tonemap } = req.body;
     if (!presetId) return res.status(400).json({ error: 'presetId required' });
     const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
     if (!ids.length) return res.status(400).json({ error: 'videoIds required' });
@@ -395,7 +399,7 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
       tonemap = !!cp.tonemap;
     }
 
-    const opts = { quality: quality || 'good', container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap };
+    const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap };
     const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, opts);
     res.json({ jobs: result.jobs, skipped: result.skipped });
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -487,7 +491,7 @@ router.get('/events', (req, res) => {
   res.write('event: connected\ndata: {}\n\n');
   encoder.addSSEClient(res);
   logger.addClient(res);
-  req.on('close', () => { logger.removeClient(res); });
+  req.on('close', () => { encoder.removeSSEClient(res); logger.removeClient(res); });
 });
 
 /* ═══════════════════════════════════════════════════════════════

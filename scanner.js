@@ -15,7 +15,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb, pool } = require('./db');
+const { getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb, getPool } = require('./db');
 require('dotenv').config({ override: true });
 
 const logger = require('./services/logger');
@@ -251,6 +251,7 @@ async function enrichVideoMeta(concurrency = 3) {
   if (!ffmpeg) return;
   if (enrichProgress.running) { logger.warn('enrich', 'Enrichment already in progress'); return; }
   try {
+    const pool = getPool();
     const [rows] = await pool.query(
       "SELECT id, file_path FROM videos WHERE codec IS NULL OR duration IS NULL"
     );
@@ -279,6 +280,7 @@ async function enrichVideoMeta(concurrency = 3) {
 async function generateMissingThumbs(limit = 5000, concurrency = 4) {
   if (thumbsProgress.running) { logger.warn('thumbs', 'Thumbnail generation already in progress'); return; }
   try {
+    const pool = getPool();
     const [rows] = await pool.query(
       'SELECT id, file_path FROM videos WHERE thumb_path IS NULL ORDER BY id DESC LIMIT ?', [limit]
     );
@@ -315,6 +317,7 @@ async function syncDatabase() {
   try {
     logger.info('sync', 'Starting database sync…');
 
+    const pool = getPool();
     // Phase 1: Remove orphan DB entries (file no longer on disk)
     const [dbRows] = await pool.query('SELECT id, file_path FROM videos');
     const dbPaths = new Map(); // file_path → id
@@ -341,7 +344,7 @@ async function syncDatabase() {
         // Also remove thumbnails
         for (const id of batch) {
           const tp = path.join(THUMB_DIR, `v_${id}.jpg`);
-          try { fs.unlinkSync(tp); } catch {}
+          try { await fs.promises.unlink(tp); } catch {}
         }
       }
       syncProgress.removed = toRemove.length;

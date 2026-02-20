@@ -6,6 +6,9 @@
 const jwt = require('jsonwebtoken');
 
 const SECRET = process.env.JWT_SECRET || 'encodium-change-me';
+if (!process.env.JWT_SECRET) {
+  console.warn('  \u26a0\ufe0f  JWT_SECRET not set — using insecure default. Set JWT_SECRET in .env for production!');
+}
 
 function signToken(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role }, SECRET, { expiresIn: '7d' });
@@ -35,4 +38,4 @@ function requireAdmin(req, res, next) {
   });
 }
 
-module.exports = { signToken, verifyToken, requireAuth, requireAdmin, SECRET };
+module.exports = { signToken, verifyToken, requireAuth, requireAdmin };

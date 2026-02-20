@@ -15,7 +15,7 @@ require('dotenv').config({ override: true });
 const mysql = require('mysql2/promise');
 
 const DB_PASS = process.env.DB_PASS;
-if (!DB_PASS) console.warn('  ⚠️  DB_PASS non défini — utilisation du mot de passe par défaut.');
+if (!DB_PASS) console.warn('  \u26a0\ufe0f  DB_PASS not set — using insecure default. Set DB_PASS in .env for production!');
 
 const pool = mysql.createPool({
   host:     process.env.DB_HOST || 'localhost',
@@ -292,7 +292,7 @@ async function countAdmins() {
 function getPool() { return pool; }
 
 module.exports = {
-  pool, getPool, initSchema, clearAll,
+  getPool, initSchema, clearAll,
   getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb,
   getSetting, setSetting,
   createUser, getUserByEmail, getUserById, updateLastLogin, listUsers, deleteUser, countAdmins,

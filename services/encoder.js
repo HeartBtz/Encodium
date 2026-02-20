@@ -31,6 +31,7 @@ const MAX_WORKERS = parseInt(process.env.MAX_WORKERS || '2', 10);
 /* ─── SSE event bus ──────────────────────────────────────────── */
 const sseClients = new Set();
 function addSSEClient(res) { sseClients.add(res); res.on('close', () => sseClients.delete(res)); }
+function removeSSEClient(res) { sseClients.delete(res); }
 function broadcast(event, data) {
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const c of sseClients) { try { c.write(msg); } catch { sseClients.delete(c); } }
@@ -914,8 +915,10 @@ async function checkAndFireWebhook() {
       hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname + url.search, method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 10000,
     };
     const req = https.request(options, () => {});
+    req.on('timeout', () => { req.destroy(); logger.warn('encoder', 'Webhook request timed out'); });
     req.on('error', (e) => logger.warn('encoder', `Webhook error: ${e.message}`));
     req.write(body);
     req.end();
@@ -997,7 +1000,6 @@ async function recoverStalledJobs() {
 /* ─── Public API ─────────────────────────────────────────────── */
 
 async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
-  const quality = (typeof opts === 'string') ? opts : (opts.quality || 'good');
   const container = (typeof opts === 'object') ? (opts.container || 'auto') : 'auto';
   const downscale = (typeof opts === 'object') ? (opts.downscale || '') : '';
   const tonemap = (typeof opts === 'object') ? (!!opts.tonemap) : false;
@@ -1025,8 +1027,8 @@ async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
 
   const encodeOpts = JSON.stringify({ container, downscale, tonemap });
   const [result] = await pool.query(
-    "INSERT INTO encode_jobs (video_id, preset_id, preset_json, replace_original, quality, encode_options, status, file_size_before) VALUES (?,?,?,?,?,?,?,?)",
-    [video_id, presetId, JSON.stringify(preset), replaceOriginal ? 1 : 0, quality, encodeOpts, 'pending', fileSize]
+    "INSERT INTO encode_jobs (video_id, preset_id, preset_json, replace_original, encode_options, status, file_size_before) VALUES (?,?,?,?,?,?,?)",
+    [video_id, presetId, JSON.stringify(preset), replaceOriginal ? 1 : 0, encodeOpts, 'pending', fileSize]
   );
   const id = result.insertId;
   broadcast('job_update', { id, status: 'pending', video_id, preset: preset.label });
@@ -1153,6 +1155,6 @@ function stop() {
 module.exports = {
   enqueue, enqueueBatch, cancelJob, cancelPending, retryJob, deleteJob, clearFinished,
   setWorkerCount, getStatus, getHistory, getJobLog,
-  addSSEClient, broadcast,
+  addSSEClient, removeSSEClient, broadcast,
   start, stop, processQueue,
 };

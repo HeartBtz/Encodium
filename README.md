@@ -103,13 +103,34 @@ node server.js
 | `DB_HOST` | `localhost` | MariaDB host |
 | `DB_PORT` | `3306` | MariaDB port |
 | `DB_USER` | `encodium` | Database user |
-| `DB_PASS` | — | Database password |
+| `DB_PASS` | — | **Required.** Database password |
 | `DB_NAME` | `encodium` | Database name |
-| `JWT_SECRET` | — | Secret for JWT token signing |
+| `JWT_SECRET` | — | **Required.** Secret for JWT token signing |
 | `PORT` | `4000` | HTTP server port |
 | `MEDIA_DIR` | — | Path to your video library |
 | `ENCODE_DIR` | `./data/encoded` | Output directory for encoded files |
+| `THUMB_DIR` | `./data/thumbs` | Thumbnail storage directory |
 | `MAX_WORKERS` | `2` | Concurrent encoding workers |
+
+> **Warning:** If `JWT_SECRET` or `DB_PASS` are not set, insecure defaults are used. Always configure them in production.
+
+## Security
+
+Encodium includes several security measures:
+
+- **Helmet** — HTTP security headers (HSTS, X-Frame-Options, etc.)
+- **Rate limiting** — 600 requests/min per IP on API routes
+- **JWT authentication** — All API routes (except thumbnails) require a valid Bearer token
+- **Bcrypt passwords** — User passwords hashed with bcryptjs
+- **Parameterized SQL** — All database queries use prepared statements (no SQL injection)
+- **Input validation** — Sort columns, pagination, and IDs validated & whitelisted
+
+### Recommendations for production
+- Set a strong, random `JWT_SECRET` (≥ 32 characters)
+- Set a strong `DB_PASS`
+- Run behind a reverse proxy (nginx/Caddy) with TLS
+- Restrict network access to the MariaDB port
+- Use firewall rules to limit who can reach port 4000
 
 ## CLI
 
@@ -193,7 +214,7 @@ Encodium/
 ├── middleware/
 │   └── auth.js            # JWT authentication
 ├── services/
-│   ├── encoder.js         # Encoding engine, queue
+│   ├── encoder.js         # Encoding engine, queue, SSE
 │   ├── gpu-detect.js      # Hardware detection
 │   └── logger.js          # Centralized logging + SSE
 ├── routes/
