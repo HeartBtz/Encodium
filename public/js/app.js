@@ -13,6 +13,7 @@
   // Library
   let libPage = 1;
   const libLimit = 50;
+  let libTotal = 0;
   let libOrder = 'asc';
   let libSelected = new Set();
   let libSearchTimer = null;
@@ -543,6 +544,7 @@
       if (codec) params.set('codec', codec);
 
       const data = await api(`/videos?${params}`);
+      libTotal = data.total || 0;
       renderLibGrid(data.videos);
       renderPagination(data.pages, data.page);
       updateSelectionBar();
@@ -611,7 +613,8 @@
     const count = libSelected.size;
     if (count > 0) {
       bar.classList.remove('hidden');
-      $('#lib-sel-count').textContent = `${count} sélectionné(s)`;
+      const extra = count > libLimit && libTotal > libLimit ? ` / ${libTotal} total` : '';
+      $('#lib-sel-count').textContent = `${count} sélectionné(s)${extra}`;
     } else {
       bar.classList.add('hidden');
     }
@@ -651,6 +654,31 @@
       c.querySelector('.mb-card-cb').checked = true;
     });
     updateSelectionBar();
+  });
+  // Select ALL videos matching the current filter (across all pages)
+  $('#lib-sel-all-filtered').addEventListener('click', async () => {
+    try {
+      const params = new URLSearchParams();
+      const q = $('#lib-search').value;
+      const folder = $('#lib-folder').value;
+      const codec = $('#lib-codec').value;
+      if (q) params.set('q', q);
+      if (folder) params.set('folder', folder);
+      if (codec) params.set('codec', codec);
+      const data = await api(`/videos/ids?${params}`);
+      if (!data.ids || !data.ids.length) { toast('Aucune vidéo correspondante', 'info'); return; }
+      data.ids.forEach(id => libSelected.add(id));
+      // Update checkboxes on current page
+      $$('.mb-card').forEach(c => {
+        const id = parseInt(c.dataset.id, 10);
+        if (libSelected.has(id)) {
+          c.classList.add('mb-selected');
+          c.querySelector('.mb-card-cb').checked = true;
+        }
+      });
+      updateSelectionBar();
+      toast(`${data.ids.length} vidéo(s) sélectionnée(s)`, 'success');
+    } catch (e) { toast(e.message, 'error'); }
   });
   $('#lib-sel-none').addEventListener('click', () => {
     libSelected.clear();
@@ -696,7 +724,7 @@
 
   async function loadEncodeQueue() {
     try {
-      const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=100')]);
+      const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=5000')]);
       renderEncodeStatus(status, history.rows);
     } catch (e) { toast(`Erreur encodage: ${e.message}`, 'error'); }
   }

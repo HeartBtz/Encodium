@@ -171,6 +171,25 @@ router.get('/videos', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Return ALL video ids matching current filters (no pagination) */
+router.get('/videos/ids', requireAuth, async (req, res) => {
+  try {
+    const pool = db.getPool();
+    const { q = '', folder = '', codec = '' } = req.query;
+    const where = [];
+    const params = [];
+    if (q) { where.push('(v.filename LIKE ? OR v.folder LIKE ?)'); const like = `%${q}%`; params.push(like, like); }
+    if (folder) { where.push('v.folder = ?'); params.push(folder); }
+    if (codec) {
+      if (codec === 'unknown') where.push("(v.codec IS NULL OR v.codec = '')");
+      else { where.push('v.codec = ?'); params.push(codec); }
+    }
+    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const [rows] = await pool.query(`SELECT v.id FROM videos v ${whereSQL}`, params);
+    res.json({ ids: rows.map(r => r.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/videos/:id', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
