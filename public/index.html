@@ -121,6 +121,18 @@
 
         <div class="admin-card">
           <div class="card-header">
+            <div class="card-icon ci-orange"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg></div>
+            <div><h3>Synchroniser la base</h3><p class="muted">Supprime les entrées orphelines et ajoute les nouveaux fichiers sans tout rescanner.</p></div>
+          </div>
+          <div class="card-actions"><button class="btn btn-primary" id="btn-sync">🔄 Synchroniser</button></div>
+          <div id="sync-progress" class="progress-wrap hidden">
+            <div class="progress-bar"><div class="progress-fill" id="sync-bar"></div></div>
+            <span id="sync-detail"></span>
+          </div>
+        </div>
+
+        <div class="admin-card">
+          <div class="card-header">
             <div class="card-icon ci-green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v9l4 2"/><circle cx="12" cy="12" r="10"/></svg></div>
             <div><h3>Enrichir les métadonnées</h3><p class="muted">Extrait codec, durée, résolution via ffprobe.</p></div>
           </div>

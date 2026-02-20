@@ -303,9 +303,127 @@ async function generateMissingThumbs(limit = 5000, concurrency = 4) {
   }
 }
 
+/* ── Sync: remove orphans + add missing without full rescan ─ */
+let syncProgress = { running: false, total: 0, done: 0, removed: 0, added: 0, errors: 0, startedAt: null, finishedAt: null };
+
+function getSyncProgress() { return { ...syncProgress }; }
+
+async function syncDatabase() {
+  if (syncProgress.running) throw new Error('Sync already in progress');
+  syncProgress = { running: true, total: 0, done: 0, removed: 0, added: 0, errors: 0, startedAt: new Date().toISOString(), finishedAt: null };
+
+  try {
+    logger.info('sync', 'Starting database sync…');
+
+    // Phase 1: Remove orphan DB entries (file no longer on disk)
+    const [dbRows] = await pool.query('SELECT id, file_path FROM videos');
+    const dbPaths = new Map(); // file_path → id
+    for (const r of dbRows) dbPaths.set(r.file_path, r.id);
+    syncProgress.total = dbRows.length;
+    logger.info('sync', `Phase 1: Checking ${dbRows.length} DB entries against disk…`);
+
+    const toRemove = [];
+    for (const [fp, id] of dbPaths) {
+      try {
+        await fs.promises.access(fp, fs.constants.F_OK);
+      } catch {
+        toRemove.push(id);
+      }
+      syncProgress.done++;
+    }
+
+    if (toRemove.length) {
+      // Delete in batches of 500
+      for (let i = 0; i < toRemove.length; i += 500) {
+        const batch = toRemove.slice(i, i + 500);
+        const ph = batch.map(() => '?').join(',');
+        await pool.query(`DELETE FROM videos WHERE id IN (${ph})`, batch);
+        // Also remove thumbnails
+        for (const id of batch) {
+          const tp = path.join(THUMB_DIR, `v_${id}.jpg`);
+          try { fs.unlinkSync(tp); } catch {}
+        }
+      }
+      syncProgress.removed = toRemove.length;
+      logger.info('sync', `Removed ${toRemove.length} orphan DB entries`);
+    }
+
+    // Phase 2: Add files on disk not in DB
+    logger.info('sync', `Phase 2: Scanning disk for new files…`);
+    const existingPaths = new Set(dbPaths.keys());
+    // Remove the orphan paths from existingPaths
+    for (const id of toRemove) {
+      for (const [fp, fid] of dbPaths) {
+        if (fid === id) { existingPaths.delete(fp); break; }
+      }
+    }
+
+    if (!fs.existsSync(MEDIA_DIR)) {
+      logger.error('sync', `MEDIA_DIR not found: ${MEDIA_DIR}`);
+      throw new Error(`MEDIA_DIR not found: ${MEDIA_DIR}`);
+    }
+
+    const entries = fs.readdirSync(MEDIA_DIR, { withFileTypes: true });
+    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
+    const rootFiles = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
+    let batch = [];
+    let addCount = 0;
+
+    const flushBatch = async () => {
+      if (!batch.length) return;
+      await batchInsertVideos(batch);
+      addCount += batch.length;
+      batch = [];
+    };
+
+    for (const dir of dirs) {
+      const folderPath = path.join(MEDIA_DIR, dir.name);
+      for await (const filePath of walkFiles(folderPath)) {
+        const ext = path.extname(filePath).toLowerCase();
+        if (!VIDEO_EXTS.has(ext)) continue;
+        if (existingPaths.has(filePath)) continue;
+        try {
+          const stat = await fs.promises.stat(filePath);
+          batch.push([dir.name, path.basename(filePath), filePath, stat.size]);
+          if (batch.length >= BATCH_SIZE) await flushBatch();
+        } catch (e) {
+          syncProgress.errors++;
+        }
+      }
+    }
+
+    // Root files
+    for (const f of rootFiles) {
+      const ext = path.extname(f.name).toLowerCase();
+      if (!VIDEO_EXTS.has(ext)) continue;
+      const filePath = path.join(MEDIA_DIR, f.name);
+      if (existingPaths.has(filePath)) continue;
+      try {
+        const stat = await fs.promises.stat(filePath);
+        batch.push(['(root)', f.name, filePath, stat.size]);
+        if (batch.length >= BATCH_SIZE) await flushBatch();
+      } catch (e) {
+        syncProgress.errors++;
+      }
+    }
+    await flushBatch();
+    syncProgress.added = addCount;
+
+    syncProgress.running = false;
+    syncProgress.finishedAt = new Date().toISOString();
+    logger.success('sync', `Sync complete — removed: ${syncProgress.removed}, added: ${syncProgress.added}, errors: ${syncProgress.errors}`);
+  } catch (e) {
+    syncProgress.running = false;
+    syncProgress.finishedAt = new Date().toISOString();
+    logger.error('sync', `Sync failed: ${e.message}`);
+    throw e;
+  }
+}
+
 module.exports = {
   MEDIA_DIR, THUMB_DIR, VIDEO_EXTS,
   scanDirectory, getProgress, cancelScan,
   getState, enrichVideoMeta, generateMissingThumbs, generateThumb,
   getEnrichProgress, getThumbsProgress,
+  syncDatabase, getSyncProgress,
 };

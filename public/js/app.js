@@ -98,6 +98,7 @@
     loadDashboard();
     loadFolders();
     checkScanOnLoad();
+    checkSyncOnLoad();
     checkEnrichOnLoad();
     checkThumbsOnLoad();
     switchTab('dashboard');
@@ -263,6 +264,52 @@
   // Check scan on load (called from showApp)
   function checkScanOnLoad() {
     api('/scan/progress').then(s => { if (s.running) startScanPoll(); }).catch(() => {});
+  }
+
+  /* ── Sync DB ───────────────────────────────────────────── */
+  let syncPollTimer = null;
+
+  $('#btn-sync').addEventListener('click', async () => {
+    try {
+      await api('/sync', { method: 'POST' });
+      toast('Synchronisation lancée', 'success');
+      startSyncPoll();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  function startSyncPoll() {
+    if (syncPollTimer) return;
+    const wrap = $('#sync-progress');
+    const bar = $('#sync-bar');
+    const detail = $('#sync-detail');
+    const btn = $('#btn-sync');
+
+    wrap.classList.remove('hidden');
+    btn.disabled = true;
+
+    syncPollTimer = setInterval(async () => {
+      try {
+        const s = await api('/sync/progress');
+        if (s.running) {
+          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
+          bar.style.width = pct + '%';
+          detail.textContent = `${s.done}/${s.total} vérifiés — ${s.removed} supprimé(s), ${s.added} ajouté(s), ${s.errors} erreurs`;
+        } else {
+          clearInterval(syncPollTimer);
+          syncPollTimer = null;
+          bar.style.width = '100%';
+          detail.textContent = `Terminé — ${s.removed} supprimé(s), ${s.added} ajouté(s), ${s.errors} erreurs`;
+          btn.disabled = false;
+          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 5000);
+          loadDashboard();
+          loadFolders();
+        }
+      } catch { clearInterval(syncPollTimer); syncPollTimer = null; btn.disabled = false; }
+    }, 1000);
+  }
+
+  function checkSyncOnLoad() {
+    api('/sync/progress').then(s => { if (s.running) startSyncPoll(); }).catch(() => {});
   }
 
   /* ── Enrich / Thumbs ──────────────────────────────────── */

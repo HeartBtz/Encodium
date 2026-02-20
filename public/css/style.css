@@ -187,6 +187,7 @@ body {
 .ci-yellow { background: rgba(234,179,8,.1);   color: var(--a-yellow); }
 .ci-red    { background: rgba(239,68,68,.1);   color: var(--a-red); }
 .ci-purple { background: rgba(168,85,247,.1);  color: var(--a-purple); }
+.ci-orange { background: rgba(249,115,22,.1);  color: #f97316; }
 
 .card-header h3 { font-size: 15px; font-weight: 600; color: var(--a-text); margin-bottom: 2px; }
 .card-header .muted,

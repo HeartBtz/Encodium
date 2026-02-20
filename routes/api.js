@@ -64,6 +64,22 @@ router.post('/scan/cancel', requireAuth, (req, res) => {
   res.json({ message: 'Scan cancelled' });
 });
 
+router.post('/sync', requireAuth, async (req, res) => {
+  try {
+    const syncState = scanner.getSyncProgress();
+    if (syncState.running) return res.status(409).json({ error: 'Sync already in progress' });
+    const scanState = scanner.getState();
+    if (scanState.running) return res.status(409).json({ error: 'Scan in progress, cannot sync simultaneously' });
+    logger.info('sync', 'Database sync triggered by user');
+    scanner.syncDatabase().catch(e => logger.error('sync', `Sync error: ${e.message}`));
+    res.json({ message: 'Sync started' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/sync/progress', requireAuth, (req, res) => {
+  res.json(scanner.getSyncProgress());
+});
+
 router.post('/enrich', requireAuth, async (req, res) => {
   try {
     const enrichState = scanner.getEnrichProgress();
