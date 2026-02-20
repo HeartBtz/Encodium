@@ -4,6 +4,16 @@
 
 ![Node.js](https://img.shields.io/badge/node-18%2B-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
+## Screenshots
+
+| Library & Dashboard | Encoding Queue |
+|---|---|
+| ![Library](Screenshots/Encodium_menu.png) | ![Encoding](Screenshots/Encodium_encodage.png) |
+
+| Library (alternate view) | Logs |
+|---|---|
+| ![Library 2](Screenshots/encodium_menu2.png) | ![Logs](Screenshots/Encodium_logs.png) |
+
 ## Features
 
 ### Core
@@ -17,6 +27,7 @@
 
 ### Encoding Engine
 - **Size Guard** — Rejects encodes that are larger than the original, keeping the source intact
+- **Skip Flag** — Videos where encoding produced a larger file are flagged (`encode_skip`) to prevent re-encoding; force re-encode available from the UI
 - **HDR Preservation** — 10-bit/HDR10 color metadata detection and passthrough
 - **HDR → SDR Tonemapping** — Optional zscale-based tonemap filter chain
 - **Dolby Vision Protection** — Skips DV files to avoid data loss
@@ -42,6 +53,8 @@
 - **Real-time Progress** — Server-Sent Events (SSE) for live encode progress, log streaming
 - **Stats Dashboard** — Video count, total size, duration, codec distribution, encoding savings
 - **Encoding Charts** — Daily savings history and before/after size comparison (Chart.js)
+- **Shift-click Range Selection** — Select multiple videos at once with Shift+click
+- **Select All (filtered)** — Select all videos matching the current search/filter across all pages
 - **Dark Theme** — Responsive single-page application
 - **Authentication** — JWT-based login with admin roles
 
@@ -54,17 +67,31 @@
 
 ## Quick Start
 
+### Bare metal
+
 ```bash
 git clone git@github.com:HeartBtz/Encodium.git
 cd Encodium
 bash install.sh
 ```
 
+The install script handles **everything**: Node.js, MariaDB, ffmpeg, npm dependencies, database creation, `.env` configuration, admin account, PM2 + systemd service.
+
+### Docker
+
+```bash
+git clone git@github.com:HeartBtz/Encodium.git
+cd Encodium
+docker compose up -d                         # CPU only
+docker compose --profile gpu up -d           # NVIDIA GPU
+docker compose exec encodium node cli.js useradd admin@example.com yourpassword
+```
+
 Open **http://localhost:4000** and log in with:
 - Email: `admin@encodium.local`
 - Password: `admin`
 
-The install script handles dependencies, database creation, `.env` configuration, admin account setup, and PM2 + systemd service registration.
+> **Warning:** Change the admin password after first login!
 
 ## Process Management
 
@@ -140,6 +167,7 @@ node cli.js enrich    # Re-run ffprobe metadata extraction
 node cli.js thumbs    # Generate missing thumbnails
 node cli.js clear     # Clear all videos from database
 node cli.js stats     # Show database statistics
+node cli.js useradd <email> <password>   # Create admin user
 ```
 
 ## API
@@ -154,12 +182,17 @@ node cli.js stats     # Show database statistics
 | GET | `/api/scan/progress` | Scan progress |
 | POST | `/api/scan/cancel` | Cancel scan |
 | POST | `/api/sync` | Sync database (orphan removal + new file discovery) |
+| GET | `/api/sync/progress` | Sync progress |
 | POST | `/api/enrich` | Enrich video metadata (ffprobe) |
+| GET | `/api/enrich/progress` | Enrich progress |
 | POST | `/api/thumbs` | Generate missing thumbnails |
+| GET | `/api/thumbs/progress` | Thumbnails progress |
 | **Videos** | | |
-| GET | `/api/videos` | List / search / filter videos |
+| GET | `/api/videos` | List / search / filter videos (paginated) |
+| GET | `/api/videos/ids` | All video IDs matching current filters |
 | GET | `/api/videos/:id` | Single video details |
 | POST | `/api/videos/delete` | Bulk delete videos |
+| POST | `/api/videos/clear-skip` | Clear encode_skip flag for given IDs |
 | GET | `/api/folders` | Folder list with counts |
 | GET | `/api/codec-stats` | Codec distribution |
 | GET | `/api/stats` | Dashboard stats (videos, jobs, savings) |
@@ -210,6 +243,8 @@ Encodium/
 ├── scanner.js             # Media scanner, metadata enrichment, sync
 ├── cli.js                 # CLI commands
 ├── install.sh             # Installation script
+├── Dockerfile             # Multi-stage Docker build
+├── docker-compose.yml     # Docker Compose (CPU + GPU profiles)
 ├── ecosystem.config.js    # PM2 configuration
 ├── middleware/
 │   └── auth.js            # JWT authentication
@@ -235,7 +270,7 @@ Encodium/
 | Table | Purpose |
 |---|---|
 | `users` | Admin authentication |
-| `videos` | Scanned video files & metadata |
+| `videos` | Scanned video files & metadata (includes `encode_skip` flag) |
 | `encode_jobs` | Encoding queue & job history |
 | `settings` | Key-value app settings |
 | `encoding_savings` | Permanent encoding savings ledger |
