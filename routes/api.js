@@ -298,6 +298,54 @@ router.get('/thumb/:id', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
+   VIDEO STREAMING
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/stream/:id', async (req, res) => {
+  // Token via query param for <video> tag
+  const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  try { verifyToken(tkn); } catch { return res.status(401).json({ error: 'Invalid token' }); }
+
+  try {
+    const pool = db.getPool();
+    const [rows] = await pool.query('SELECT file_path, size FROM videos WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+
+    const video = rows[0];
+    const filePath = video.file_path;
+    const fileSize = video.size || fs.statSync(filePath).size;
+
+    const range = req.headers.range;
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 5 * 1024 * 1024, fileSize - 1);
+      const chunkSize = end - start + 1;
+
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = ext === '.mkv' ? 'video/x-matroska' : ext === '.webm' ? 'video/webm' : 'video/mp4';
+
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': mime,
+      });
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+    } else {
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = ext === '.mkv' ? 'video/x-matroska' : ext === '.webm' ? 'video/webm' : 'video/mp4';
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': mime,
+        'Accept-Ranges': 'bytes',
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
    ENCODING
    ═══════════════════════════════════════════════════════════════ */
 
@@ -322,11 +370,32 @@ router.get('/encode/history', requireAuth, async (req, res) => {
 
 router.post('/encode/enqueue', requireAuth, async (req, res) => {
   try {
-    const { videoIds, presetId, replaceOriginal, quality } = req.body;
+    let { videoIds, presetId, replaceOriginal, quality, container, downscale, tonemap } = req.body;
     if (!presetId) return res.status(400).json({ error: 'presetId required' });
     const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
     if (!ids.length) return res.status(400).json({ error: 'videoIds required' });
-    const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, quality || 'good');
+
+    // If custom preset, resolve it and find the best matching hardware preset
+    if (presetId.startsWith('custom_')) {
+      const cpId = parseInt(presetId.replace('custom_', ''), 10);
+      const pool = db.getPool();
+      const [[cp]] = await pool.query('SELECT * FROM custom_presets WHERE id=?', [cpId]);
+      if (!cp) return res.status(400).json({ error: 'Custom preset not found' });
+
+      // Find best hardware preset for this codec
+      const caps = await gpuDetect.detectAll();
+      const hwPreset = caps.presets.find(p => p.codec === cp.codec && !p.smartshrink);
+      if (!hwPreset) return res.status(400).json({ error: `No encoder available for codec ${cp.codec}` });
+      presetId = hwPreset.id;
+      // Override with custom CQ
+      hwPreset.cq = cp.cq;
+      container = cp.container || 'auto';
+      downscale = cp.downscale || '';
+      tonemap = !!cp.tonemap;
+    }
+
+    const opts = { quality: quality || 'good', container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap };
+    const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, opts);
     res.json({ jobs: result.jobs, skipped: result.skipped });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -371,6 +440,30 @@ router.get('/encode/job/:id/log', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Job priority — set priority of a pending job */
+router.post('/encode/job/:id/priority', requireAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { priority } = req.body;
+    const pVal = Math.max(-10, Math.min(10, parseInt(priority, 10) || 0));
+    const pool = db.getPool();
+    await pool.query("UPDATE encode_jobs SET priority=? WHERE id=? AND status='pending'", [pVal, id]);
+    res.json({ ok: true, priority: pVal });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Move job up/down in queue */
+router.post('/encode/job/:id/move', requireAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { direction } = req.body; // 'up' or 'down'
+    const pool = db.getPool();
+    const delta = direction === 'up' ? 1 : -1;
+    await pool.query("UPDATE encode_jobs SET priority = priority + ? WHERE id=? AND status='pending'", [delta, id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* SSE stream for real-time updates (token via query param for EventSource) */
 router.get('/events', (req, res) => {
   const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
@@ -397,6 +490,108 @@ router.get('/logs', requireAuth, (req, res) => {
   const limit = Math.min(500, parseInt(req.query.limit || '100', 10));
   const level = req.query.level || 'info';
   res.json(logger.getRecent(limit, level));
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   STATS HISTORY (for charts)
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/stats/history', requireAuth, async (req, res) => {
+  try {
+    const pool = db.getPool();
+    // Daily encoding stats for the last 30 days
+    const [rows] = await pool.query(`
+      SELECT
+        DATE(ended_at) as day,
+        COUNT(*) as count,
+        SUM(file_size_before) as total_before,
+        SUM(output_size) as total_after,
+        SUM(file_size_before - output_size) as saved,
+        AVG(TIMESTAMPDIFF(SECOND, started_at, ended_at)) as avg_duration
+      FROM encode_jobs
+      WHERE status='done' AND ended_at IS NOT NULL AND ended_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY DATE(ended_at)
+      ORDER BY day ASC
+    `);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   CUSTOM PRESETS
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/custom-presets', requireAuth, async (req, res) => {
+  try {
+    const pool = db.getPool();
+    const [rows] = await pool.query('SELECT * FROM custom_presets ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/custom-presets', requireAuth, async (req, res) => {
+  try {
+    const { name, codec, cq, container, downscale, tonemap, extra_args } = req.body;
+    if (!name) return res.status(400).json({ error: 'name required' });
+    const pool = db.getPool();
+    const [result] = await pool.query(
+      'INSERT INTO custom_presets (name, codec, cq, container, downscale, tonemap, extra_args) VALUES (?,?,?,?,?,?,?)',
+      [name, codec || 'h265', cq || 23, container || 'auto', downscale || '', tonemap ? 1 : 0, extra_args || '']
+    );
+    res.json({ id: result.insertId, ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/custom-presets/:id', requireAuth, async (req, res) => {
+  try {
+    const pool = db.getPool();
+    await pool.query('DELETE FROM custom_presets WHERE id=?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   SETTINGS — Schedule
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/settings/schedule', requireAuth, async (req, res) => {
+  try {
+    const enabled = await db.getSetting('schedule_enabled', '0');
+    const start   = await db.getSetting('schedule_start', '0');
+    const end     = await db.getSetting('schedule_end', '24');
+    res.json({ enabled: enabled === '1', start: parseInt(start, 10), end: parseInt(end, 10) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/settings/schedule', requireAuth, async (req, res) => {
+  try {
+    const { enabled, start, end } = req.body;
+    if (enabled !== undefined) await db.setSetting('schedule_enabled', enabled ? '1' : '0');
+    if (start !== undefined) await db.setSetting('schedule_start', String(Math.max(0, Math.min(23, parseInt(start, 10)))));
+    if (end !== undefined)   await db.setSetting('schedule_end', String(Math.max(1, Math.min(24, parseInt(end, 10)))));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   SETTINGS — Notifications (webhooks)
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/settings/notifications', requireAuth, async (req, res) => {
+  try {
+    const webhookUrl = await db.getSetting('webhook_url', '');
+    const webhookEnabled = await db.getSetting('webhook_enabled', '0');
+    res.json({ enabled: webhookEnabled === '1', url: webhookUrl });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/settings/notifications', requireAuth, async (req, res) => {
+  try {
+    const { enabled, url } = req.body;
+    if (enabled !== undefined) await db.setSetting('webhook_enabled', enabled ? '1' : '0');
+    if (url !== undefined) await db.setSetting('webhook_url', String(url).trim());
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════

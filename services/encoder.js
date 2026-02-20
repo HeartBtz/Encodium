@@ -171,15 +171,51 @@ async function ffprobeFullInfo(filePath) {
 
 /* ─── Build ffmpeg args (v2 — inspired by av1encoder.sh) ─────── */
 
-function buildArgsV2(preset, inFile, outFile, probeInfo) {
+function buildArgsV2(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   const { colorMeta, bitDepth, isHdr, caps: encCaps, badSubIndices } = probeInfo;
 
   const isAv1 = preset.codec === 'av1';
-  const isMkv = isAv1;
+
+  // Container selection: user choice > auto (MKV for AV1, MP4 otherwise)
+  let containerChoice = encodeOpts.container || 'auto';
+  let isMkv;
+  if (containerChoice === 'mkv') isMkv = true;
+  else if (containerChoice === 'mp4') isMkv = false;
+  else isMkv = isAv1; // auto
   const container = isMkv ? 'matroska' : 'mp4';
-  const pixFmt = (bitDepth >= 10 || isHdr) ? 'p010le' : 'yuv420p';
+
+  // Adjust output extension if needed
+  const wantExt = isMkv ? '.mkv' : '.mp4';
+  if (!outFile.endsWith(wantExt)) {
+    outFile = outFile.replace(/\.(mkv|mp4|webm|avi|mov|ts)$/i, wantExt);
+  }
+
+  // Tonemapping: if requested and video is HDR, force SDR output
+  const doTonemap = !!(encodeOpts.tonemap && isHdr);
+  const pixFmt = (!doTonemap && (bitDepth >= 10 || isHdr)) ? 'p010le' : 'yuv420p';
+
+  // Downscale resolution
+  const downscale = encodeOpts.downscale ? parseInt(encodeOpts.downscale, 10) : 0;
 
   const tail = [];
+  const vfFilters = [];
+
+  // Build video filters
+  if (doTonemap) {
+    // HDR→SDR tonemapping filter chain (zscale-based)
+    vfFilters.push(
+      'zscale=t=linear:npl=100',
+      'format=gbrpf32le',
+      'zscale=p=bt709',
+      'tonemap=tonemap=hable:desat=0',
+      'zscale=t=bt709:m=bt709:r=tv',
+      'format=yuv420p'
+    );
+  }
+  if (downscale > 0) {
+    // Scale to target height, keep aspect ratio (even width)
+    vfFilters.push(`scale=-2:${downscale}`);
+  }
 
   // Map all streams, drop bad subtitle streams
   tail.push('-map', '0');
@@ -187,6 +223,11 @@ function buildArgsV2(preset, inFile, outFile, probeInfo) {
     tail.push('-map', `-0:${idx}`);
   }
   tail.push('-map_metadata', '0', '-map_chapters', '0');
+
+  // Apply video filters if any
+  if (vfFilters.length) {
+    tail.push('-vf', vfFilters.join(','));
+  }
 
   // Video: encode first video stream
   tail.push('-c:v:0', preset.encoder);
@@ -238,12 +279,14 @@ function buildArgsV2(preset, inFile, outFile, probeInfo) {
   // Pixel format
   tail.push('-pix_fmt', pixFmt);
 
-  // Preserve color signaling
-  const { transfer, primaries, space, range } = colorMeta;
-  if (primaries && primaries !== 'unknown' && primaries !== 'N/A') tail.push('-color_primaries', primaries);
-  if (transfer && transfer !== 'unknown' && transfer !== 'N/A') tail.push('-color_trc', transfer);
-  if (space && space !== 'unknown' && space !== 'N/A') tail.push('-colorspace', space);
-  if (range && range !== 'unknown' && range !== 'N/A') tail.push('-color_range', range);
+  // Preserve color signaling (skip if tonemapping to SDR — handled by filter)
+  if (!doTonemap) {
+    const { transfer, primaries, space, range } = colorMeta;
+    if (primaries && primaries !== 'unknown' && primaries !== 'N/A') tail.push('-color_primaries', primaries);
+    if (transfer && transfer !== 'unknown' && transfer !== 'N/A') tail.push('-color_trc', transfer);
+    if (space && space !== 'unknown' && space !== 'N/A') tail.push('-colorspace', space);
+    if (range && range !== 'unknown' && range !== 'N/A') tail.push('-color_range', range);
+  }
 
   // Spatial AQ (NVENC quality improvement)
   if (encCaps.spatial_aq) tail.push('-spatial_aq', '1');
@@ -696,6 +739,10 @@ async function processJob(job) {
   try { preset = JSON.parse(job.preset_json); }
   catch { preset = { encoder: 'libx265', codec: 'h265', type: 'cpu', id: 'cpu_h265' }; }
 
+  // Parse encode options (container, downscale, tonemap)
+  let encodeOpts = {};
+  try { if (job.encode_options) encodeOpts = JSON.parse(job.encode_options); } catch {}
+
   let devKey = 'cpu';
   let tmpFile = null;
 
@@ -776,7 +823,11 @@ async function processJob(job) {
     // ── Build output path ──
     const inFile = video.file_path;
     const isAv1 = preset.codec === 'av1';
-    const ext = isAv1 ? '.mkv' : '.mp4';
+    // Container: user choice > auto
+    let ext;
+    if (encodeOpts.container === 'mkv') ext = '.mkv';
+    else if (encodeOpts.container === 'mp4') ext = '.mp4';
+    else ext = isAv1 ? '.mkv' : '.mp4';
     const baseName = path.basename(inFile, path.extname(inFile));
     const replaceOriginal = !!job.replace_original;
 
@@ -828,7 +879,7 @@ async function processJob(job) {
       inputCodec, colorMeta, bitDepth, isHdr,
       caps: encCaps, badSubIndices, inputDuration,
     };
-    const { swArgs, hwArgs } = buildArgsV2(preset, inFile, tmpFile, probeInfo);
+    const { swArgs, hwArgs } = buildArgsV2(preset, inFile, tmpFile, probeInfo, encodeOpts);
 
     jobLog.info(`--- ffmpeg commands ---`);
     jobLog.info(`SW: ffmpeg ${swArgs.join(' ')}`);
@@ -961,6 +1012,8 @@ async function processJob(job) {
     active.delete(job.id);
     if (tmpFile) { try { await fsp.unlink(tmpFile); } catch {} }
     await jobLog.close();
+    // Fire webhook if queue is now empty
+    checkAndFireWebhook().catch(() => {});
   }
 }
 
@@ -1064,6 +1117,62 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
   });
 }
 
+/* ─── Schedule check ─────────────────────────────────────────── */
+
+async function isScheduleAllowed() {
+  const enabled = await db.getSetting('schedule_enabled', '0');
+  if (enabled !== '1') return true; // scheduling disabled = always allowed
+  const startH = parseInt(await db.getSetting('schedule_start', '0'), 10);
+  const endH   = parseInt(await db.getSetting('schedule_end', '24'), 10);
+  const now = new Date();
+  const h = now.getHours();
+  if (startH <= endH) return h >= startH && h < endH;
+  // Overnight window (e.g. 22 → 6)
+  return h >= startH || h < endH;
+}
+
+/* ─── Webhook notification ───────────────────────────────────── */
+
+async function checkAndFireWebhook() {
+  try {
+    const pool = db.getPool();
+    const [[{ cnt }]] = await pool.query("SELECT COUNT(*) as cnt FROM encode_jobs WHERE status IN ('pending','encoding')");
+    if (parseInt(cnt, 10) > 0) return; // still jobs running
+
+    const webhookEnabled = await db.getSetting('webhook_enabled', '0');
+    if (webhookEnabled !== '1') return;
+    const webhookUrl = await db.getSetting('webhook_url', '');
+    if (!webhookUrl) return;
+
+    // Gather summary
+    const [[summary]] = await pool.query(
+      "SELECT COUNT(*) as total, SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors FROM encode_jobs WHERE ended_at > DATE_SUB(NOW(), INTERVAL 1 DAY)"
+    );
+
+    const isDiscord = webhookUrl.includes('discord.com/api/webhooks');
+    const payload = isDiscord
+      ? { content: `✅ **Encodium** — File d'encodage terminée\n🎬 ${summary.done || 0} réussi(s) · ❌ ${summary.errors || 0} erreur(s)` }
+      : { event: 'queue_complete', done: summary.done || 0, errors: summary.errors || 0, total: summary.total || 0 };
+
+    const https = webhookUrl.startsWith('https') ? require('https') : require('http');
+    const body = JSON.stringify(payload);
+    const url = new URL(webhookUrl);
+    const options = {
+      hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname + url.search, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    };
+    const req = https.request(options, () => {});
+    req.on('error', (e) => logger.warn('encoder', `Webhook error: ${e.message}`));
+    req.write(body);
+    req.end();
+
+    logger.info('encoder', `Webhook sent to ${url.hostname}`);
+  } catch (e) {
+    logger.warn('encoder', `Webhook check error: ${e.message}`);
+  }
+}
+
 /* ─── Queue processor ────────────────────────────────────────── */
 
 async function processQueue() {
@@ -1077,12 +1186,18 @@ async function processQueue() {
   _processing = true;
   _processingTs = Date.now();
   try {
+    // Check schedule window
+    if (!(await isScheduleAllowed())) {
+      _processing = false;
+      _processingTs = 0;
+      return;
+    }
     const pool = db.getPool();
     while (running && active.size < workerCount) {
       // Atomically claim ONE pending job by updating its status before firing processJob.
       // This prevents the same job being picked twice in rapid succession.
       const [rows] = await pool.query(
-        "SELECT * FROM encode_jobs WHERE status='pending' ORDER BY created_at ASC LIMIT 1"
+        "SELECT * FROM encode_jobs WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 1"
       );
       if (!rows.length) break;
       const job = rows[0];
@@ -1128,7 +1243,12 @@ async function recoverStalledJobs() {
 
 /* ─── Public API ─────────────────────────────────────────────── */
 
-async function enqueue(video_id, presetId, replaceOriginal = false, quality = 'good') {
+async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
+  const quality = (typeof opts === 'string') ? opts : (opts.quality || 'good');
+  const container = (typeof opts === 'object') ? (opts.container || 'auto') : 'auto';
+  const downscale = (typeof opts === 'object') ? (opts.downscale || '') : '';
+  const tonemap = (typeof opts === 'object') ? (!!opts.tonemap) : false;
+
   const caps = await gpuDetect.detectAll();
   const preset = caps.presets.find(p => p.id === presetId);
   if (!preset) throw new Error(`Unknown preset: ${presetId}`);
@@ -1150,9 +1270,10 @@ async function enqueue(video_id, presetId, replaceOriginal = false, quality = 'g
     return { skipped: true, video_id, reason: `already ${currentCodec}` };
   }
 
+  const encodeOpts = JSON.stringify({ container, downscale, tonemap });
   const [result] = await pool.query(
-    "INSERT INTO encode_jobs (video_id, preset_id, preset_json, replace_original, quality, status, file_size_before) VALUES (?,?,?,?,?,?,?)",
-    [video_id, presetId, JSON.stringify(preset), replaceOriginal ? 1 : 0, quality, 'pending', fileSize]
+    "INSERT INTO encode_jobs (video_id, preset_id, preset_json, replace_original, quality, encode_options, status, file_size_before) VALUES (?,?,?,?,?,?,?,?)",
+    [video_id, presetId, JSON.stringify(preset), replaceOriginal ? 1 : 0, quality, encodeOpts, 'pending', fileSize]
   );
   const id = result.insertId;
   broadcast('job_update', { id, status: 'pending', video_id, preset: preset.label });
@@ -1161,10 +1282,10 @@ async function enqueue(video_id, presetId, replaceOriginal = false, quality = 'g
   return id;
 }
 
-async function enqueueBatch(videoIds, presetId, replaceOriginal = false, quality = 'good') {
+async function enqueueBatch(videoIds, presetId, replaceOriginal = false, opts = {}) {
   const results = { jobs: [], skipped: [] };
   for (const vid of videoIds) {
-    const r = await enqueue(vid, presetId, replaceOriginal, quality);
+    const r = await enqueue(vid, presetId, replaceOriginal, opts);
     if (r && typeof r === 'object' && r.skipped) {
       results.skipped.push(r);
     } else {

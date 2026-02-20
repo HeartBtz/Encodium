@@ -178,6 +178,7 @@
     if (tab === 'library') { loadLibrary(); loadEncodeQueue(); }
     if (tab === 'hardware') loadHardware();
     if (tab === 'logs') renderLogs();
+    if (tab === 'settings') loadSettings();
   }
 
   /* ═══════════════════════════════════════════════════════
@@ -243,7 +244,64 @@
       } else {
         grid.innerHTML = '<p style="color:var(--a-text-muted);padding:12px">Aucune donnée codec</p>';
       }
+
+      // Load encoding history charts
+      loadStatsCharts();
     } catch (e) { toast(`Erreur dashboard: ${e.message}`, 'error'); }
+  }
+
+  /* ── Stats Charts ─────────────────────────────────────── */
+  let savingsChart = null, speedChart = null;
+
+  async function loadStatsCharts() {
+    if (typeof Chart === 'undefined') return;
+    try {
+      const history = await api('/stats/history');
+      if (!history || !history.length) {
+        $('#stats-charts-card').style.display = 'none';
+        return;
+      }
+      $('#stats-charts-card').style.display = '';
+
+      const labels = history.map(h => h.day);
+      const savedData = history.map(h => ((h.saved || 0) / 1e9).toFixed(2)); // GB
+      const countData = history.map(h => h.count);
+      const durationData = history.map(h => Math.round((h.avg_duration || 0) / 60)); // minutes
+
+      const chartOpts = {
+        responsive: true,
+        plugins: { legend: { labels: { color: '#aaa' } } },
+        scales: {
+          x: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          y: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        },
+      };
+
+      // Savings chart
+      if (savingsChart) savingsChart.destroy();
+      savingsChart = new Chart($('#chart-savings'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Espace gagné (GB)', data: savedData, backgroundColor: 'rgba(168,85,247,0.6)', borderColor: 'rgba(168,85,247,1)', borderWidth: 1 },
+            { label: 'Fichiers', data: countData, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: 'rgba(59,130,246,1)', borderWidth: 1, yAxisID: 'y1' },
+          ],
+        },
+        options: { ...chartOpts, scales: { ...chartOpts.scales, y1: { position: 'right', ticks: { color: '#888' }, grid: { drawOnChartArea: false } } } },
+      });
+
+      // Speed chart
+      if (speedChart) speedChart.destroy();
+      speedChart = new Chart($('#chart-speed'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{ label: 'Durée moyenne (min)', data: durationData, borderColor: 'rgba(34,197,94,0.8)', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3 }],
+        },
+        options: chartOpts,
+      });
+    } catch {}
   }
 
   /* ── Scan progress ────────────────────────────────────── */
@@ -499,7 +557,10 @@
       return `
         <div class="mb-card ${sel ? 'mb-selected' : ''}" data-id="${v.id}">
           <input type="checkbox" class="mb-card-cb" ${sel ? 'checked' : ''}>
-          <img src="/api/thumb/${v.id}" onerror="this.src='/img/no-thumb.svg'" loading="lazy">
+          <div class="mb-card-thumb">
+            <img src="/api/thumb/${v.id}" onerror="this.src='/img/no-thumb.svg'" loading="lazy">
+            <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="Lire">▶</button>
+          </div>
           <span class="mb-card-size">${fmtSize(v.size)}</span>
           <div class="mb-card-info">
             <div class="mb-card-name" title="${escHtml(v.filename)}">${escHtml(v.filename)}</div>
@@ -511,7 +572,7 @@
     // Click to select
     $$('.mb-card', grid).forEach(card => {
       card.addEventListener('click', e => {
-        if (e.target.tagName === 'INPUT') return; // checkbox handles itself
+        if (e.target.tagName === 'INPUT' || e.target.classList.contains('mb-play-btn')) return;
         const id = parseInt(card.dataset.id, 10);
         toggleSelect(id, card);
       });
@@ -519,6 +580,16 @@
       cb.addEventListener('change', () => {
         const id = parseInt(card.dataset.id, 10);
         toggleSelect(id, card, cb.checked);
+      });
+    });
+
+    // Play buttons
+    $$('.mb-play-btn', grid).forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const vid = btn.dataset.vid;
+        const fname = btn.dataset.fname;
+        openVideoPlayer(vid, fname);
       });
     });
   }
@@ -674,7 +745,7 @@
               <div class="enc-job-pct">${j._pct || 0}%</div>
             </div>` : ''}
           <div class="enc-job-actions">
-            ${j.status === 'pending' ? `<button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
+            ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="Priorité +">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="Priorité −">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
             ${j.status === 'error' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
             ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
             ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
@@ -690,6 +761,8 @@
       if (act === 'cancel') await api(`/encode/cancel/${id}`, { method: 'POST' });
       else if (act === 'retry') await api(`/encode/retry/${id}`, { method: 'POST' });
       else if (act === 'delete') await api(`/encode/job/${id}`, { method: 'DELETE' });
+      else if (act === 'up') await api(`/encode/job/${id}/move`, { method: 'POST', body: JSON.stringify({ direction: 'up' }) });
+      else if (act === 'down') await api(`/encode/job/${id}/move`, { method: 'POST', body: JSON.stringify({ direction: 'down' }) });
       else if (act === 'log') { showJobLog(id); return; }
       loadEncodeQueue();
     } catch (e) { toast(e.message, 'error'); }
@@ -781,6 +854,29 @@
     } catch (e) { toast(e.message, 'error'); }
   });
 
+  /* ── Video Player ──────────────────────────────────────── */
+  function openVideoPlayer(videoId, filename) {
+    const player = $('#video-player');
+    const modal = $('#player-modal');
+    $('#player-title').textContent = filename || 'Lecture vidéo';
+    player.src = `/api/stream/${videoId}?token=${encodeURIComponent(token)}`;
+    modal.style.display = '';
+    player.play().catch(() => {});
+  }
+
+  function closeVideoPlayer() {
+    const player = $('#video-player');
+    player.pause();
+    player.removeAttribute('src');
+    player.load();
+    $('#player-modal').style.display = 'none';
+  }
+
+  $('#player-modal-close').addEventListener('click', closeVideoPlayer);
+  $('#player-modal').addEventListener('click', e => {
+    if (e.target === $('#player-modal')) closeVideoPlayer();
+  });
+
   /* ── Encode Modal ─────────────────────────────────────── */
   let encodeVideoIds = [];
 
@@ -793,10 +889,24 @@
 
   async function loadPresetsForModal() {
     try {
-      const caps = await api('/encode/capabilities');
+      const [caps, customPresets] = await Promise.all([
+        api('/encode/capabilities'),
+        api('/custom-presets').catch(() => []),
+      ]);
       presets = caps.presets || [];
+
+      // Add custom presets with a special prefix
+      const customEntries = (customPresets || []).map(cp => ({
+        id: `custom_${cp.id}`,
+        label: `⭐ ${cp.name}`,
+        _custom: cp,
+      }));
+
       const sel = $('#encode-preset');
-      sel.innerHTML = presets.map(p => `<option value="${p.id}">${escHtml(p.label)}</option>`).join('');
+      sel.innerHTML = [
+        ...customEntries.map(p => `<option value="${p.id}">${escHtml(p.label)}</option>`),
+        ...presets.map(p => `<option value="${p.id}">${escHtml(p.label)}</option>`),
+      ].join('');
       // Toggle SmartShrink quality selector
       sel.addEventListener('change', toggleSmartShrinkQuality);
       toggleSmartShrinkQuality();
@@ -817,11 +927,14 @@
     const presetId = $('#encode-preset').value;
     const replaceOriginal = $('#encode-replace').checked;
     const quality = presetId.startsWith('smartshrink_') ? ($('#encode-quality')?.value || 'good') : undefined;
+    const container = $('#encode-container')?.value || 'auto';
+    const downscale = $('#encode-downscale')?.value || '';
+    const tonemap = $('#encode-tonemap')?.checked || false;
     if (!presetId) return toast('Sélectionnez un preset', 'warn');
     try {
       const r = await api('/encode/enqueue', {
         method: 'POST',
-        body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal, quality }),
+        body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal, quality, container, downscale, tonemap }),
       });
       const nJobs = (r.jobs || []).length;
       const nSkipped = (r.skipped || []).length;
@@ -931,6 +1044,112 @@
   $('#btn-clear-logs').addEventListener('click', () => {
     logEntries.length = 0;
     $('#log-container').innerHTML = '';
+  });
+
+  /* ═══════════════════════════════════════════════════════
+     SETTINGS
+     ═══════════════════════════════════════════════════════ */
+
+  async function loadSettings() {
+    // Schedule
+    try {
+      const sched = await api('/settings/schedule');
+      $('#schedule-enabled').checked = sched.enabled;
+      $('#schedule-start').value = sched.start;
+      $('#schedule-end').value = sched.end;
+      $('#schedule-fields').style.display = sched.enabled ? 'flex' : 'none';
+    } catch {}
+    // Webhook
+    try {
+      const notif = await api('/settings/notifications');
+      $('#webhook-enabled').checked = notif.enabled;
+      $('#webhook-url').value = notif.url || '';
+    } catch {}
+    // Custom presets
+    loadCustomPresets();
+  }
+
+  $('#schedule-enabled').addEventListener('change', () => {
+    $('#schedule-fields').style.display = $('#schedule-enabled').checked ? 'flex' : 'none';
+  });
+
+  $('#btn-save-schedule').addEventListener('click', async () => {
+    try {
+      await api('/settings/schedule', {
+        method: 'POST',
+        body: JSON.stringify({
+          enabled: $('#schedule-enabled').checked,
+          start: parseInt($('#schedule-start').value, 10),
+          end: parseInt($('#schedule-end').value, 10),
+        }),
+      });
+      toast('Planification enregistrée', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  $('#btn-save-webhook').addEventListener('click', async () => {
+    try {
+      await api('/settings/notifications', {
+        method: 'POST',
+        body: JSON.stringify({
+          enabled: $('#webhook-enabled').checked,
+          url: $('#webhook-url').value,
+        }),
+      });
+      toast('Notifications enregistrées', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  /* ── Custom Presets ─────────────────────────────────────── */
+  async function loadCustomPresets() {
+    try {
+      const presetsList = await api('/custom-presets');
+      const list = $('#custom-presets-list');
+      if (!presetsList.length) {
+        list.innerHTML = '<p style="color:var(--a-text-muted);font-size:12px">Aucun preset personnalisé</p>';
+        return;
+      }
+      list.innerHTML = presetsList.map(p => `
+        <div class="enc-job">
+          <span class="enc-job-status" style="background:var(--a-green)"></span>
+          <div class="enc-job-info">
+            <div class="enc-job-name">${escHtml(p.name)}</div>
+            <div class="enc-job-meta">${p.codec.toUpperCase()} · CQ ${p.cq} · ${p.container || 'auto'} ${p.downscale ? '· ' + p.downscale + 'p' : ''} ${p.tonemap ? '· HDR→SDR' : ''}</div>
+          </div>
+          <div class="enc-job-actions">
+            <button class="btn btn-xs btn-danger" onclick="deleteCustomPreset(${p.id})">🗑</button>
+          </div>
+        </div>`).join('');
+    } catch {}
+  }
+
+  window.deleteCustomPreset = async function(id) {
+    try {
+      await api(`/custom-presets/${id}`, { method: 'DELETE' });
+      toast('Preset supprimé', 'success');
+      loadCustomPresets();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  $('#btn-save-custom-preset').addEventListener('click', async () => {
+    const name = $('#cp-name').value.trim();
+    if (!name) return toast('Nom requis', 'warn');
+    try {
+      await api('/custom-presets', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          codec: $('#cp-codec').value,
+          cq: parseInt($('#cp-cq').value, 10),
+          container: $('#cp-container').value,
+          downscale: $('#cp-downscale').value,
+          tonemap: $('#cp-tonemap').checked,
+        }),
+      });
+      toast('Preset créé', 'success');
+      $('#cp-name').value = '';
+      loadCustomPresets();
+    } catch (e) { toast(e.message, 'error'); }
   });
 
   /* ═══════════════════════════════════════════════════════

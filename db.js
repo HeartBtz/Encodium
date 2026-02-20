@@ -129,6 +129,25 @@ async function initSchema() {
     // Migrate old column names if they exist
     await safeAlter(conn, 'ALTER TABLE encode_jobs CHANGE COLUMN file_size_after output_size BIGINT DEFAULT 0');
     await safeAlter(conn, 'ALTER TABLE encode_jobs CHANGE COLUMN finished_at ended_at DATETIME');
+    // v1.1 — encode options (container, downscale, tonemap)
+    await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN encode_options TEXT AFTER quality");
+    // v1.1 — job priority
+    await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN priority INT DEFAULT 0 AFTER replace_original");
+
+    // ── Custom Presets ──
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS custom_presets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(200) NOT NULL,
+        codec VARCHAR(20) NOT NULL DEFAULT 'h265',
+        cq INT DEFAULT 23,
+        container VARCHAR(10) DEFAULT 'auto',
+        downscale VARCHAR(10) DEFAULT '',
+        tonemap TINYINT DEFAULT 0,
+        extra_args TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
   } finally {
     conn.release();
   }
