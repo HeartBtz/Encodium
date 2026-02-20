@@ -62,6 +62,9 @@
   function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
   function truncPath(p) { return p ? p.split('/').pop() : ''; }
 
+  /* ── Live progress cache (survives queue re-renders) ─── */
+  const liveProgress = new Map();   // jobId → { percent, speed, fps, text }
+
   function toast(msg, type = 'info') {
     const c = $('#toast-container');
     const el = document.createElement('div');
@@ -742,11 +745,16 @@
             <div class="enc-job-name" title="${escHtml(fname)}">${escHtml(fname)}</div>
             <div class="enc-job-meta">${ssBadge}${qualityBadge}${escHtml(meta)}</div>
           </div>
-          ${showProgress ? `
+          ${showProgress ? (() => {
+            const cached = liveProgress.get(j.id);
+            const pct = cached ? cached.percent : (j.progress || 0);
+            const label = cached && cached.text ? cached.text : pct + '%';
+            return `
             <div class="enc-job-progress">
-              <div class="progress-bar"><div class="progress-fill" style="width:${j._pct || 0}%"></div></div>
-              <div class="enc-job-pct">${j._pct || 0}%</div>
-            </div>` : ''}
+              <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+              <div class="enc-job-pct">${label}</div>
+            </div>`;
+          })() : ''}
           <div class="enc-job-actions">
             ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="Priorité +">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="Priorité −">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
             ${j.status === 'error' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
@@ -799,6 +807,10 @@
 
   // SSE handlers
   function handleJobUpdate(d) {
+    // Clean up progress cache for finished jobs
+    if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {
+      liveProgress.delete(d.id);
+    }
     // Always refresh encode queue on job status changes
     loadEncodeQueue();
     if (d.status === 'done') {
@@ -816,6 +828,7 @@
   }
 
   function handleJobProgress(d) {
+    liveProgress.set(d.id, { percent: d.percent, speed: d.speed, fps: d.fps });
     const job = $(`.enc-job[data-jid="${d.id}"]`);
     if (!job) return;
     const fill = job.querySelector('.progress-fill');
@@ -825,19 +838,20 @@
   }
 
   function handleSmartShrinkProgress(d) {
+    if (d.done) {
+      liveProgress.set(d.id, { percent: 100, text: `CRF ${d.optimalCRF}` });
+    } else {
+      const ssimText = d.ssim ? ` SSIM=${d.ssim.toFixed(4)}` : '';
+      const pct = Math.round((d.iteration / d.maxIterations) * 100);
+      liveProgress.set(d.id, { percent: pct, text: `🧠 ${d.iteration}/${d.maxIterations} CRF=${d.crf}${ssimText}` });
+    }
     const job = $(`.enc-job[data-jid="${d.id}"]`);
     if (!job) return;
-    const pctEl = job.querySelector('.enc-job-pct');
-    if (d.done) {
-      if (pctEl) pctEl.textContent = `CRF ${d.optimalCRF}`;
-      return;
-    }
-    if (pctEl) {
-      const ssimText = d.ssim ? ` SSIM=${d.ssim.toFixed(4)}` : '';
-      pctEl.textContent = `🧠 ${d.iteration}/${d.maxIterations} CRF=${d.crf}${ssimText}`;
-    }
+    const cached = liveProgress.get(d.id);
     const fill = job.querySelector('.progress-fill');
-    if (fill) fill.style.width = Math.round((d.iteration / d.maxIterations) * 100) + '%';
+    const pctEl = job.querySelector('.enc-job-pct');
+    if (fill) fill.style.width = (cached.percent || 0) + '%';
+    if (pctEl) pctEl.textContent = cached.text || (cached.percent + '%');
   }
 
   // Workers
