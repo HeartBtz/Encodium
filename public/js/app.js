@@ -726,7 +726,11 @@
     // Always refresh encode queue on job status changes
     loadEncodeQueue();
     if (d.status === 'done') {
-      toast(`Encodage terminé : job #${d.id}`, 'success');
+      if (d.skipped) {
+        toast(`Job #${d.id} : ${d.reason || 'encodage ignoré'}`, 'info');
+      } else {
+        toast(`Encodage terminé : job #${d.id}`, 'success');
+      }
       loadDashboard();
       // Refresh library to show updated codec/size/metadata
       loadLibrary();
@@ -815,11 +819,15 @@
     const quality = presetId.startsWith('smartshrink_') ? ($('#encode-quality')?.value || 'good') : undefined;
     if (!presetId) return toast('Sélectionnez un preset', 'warn');
     try {
-      await api('/encode/enqueue', {
+      const r = await api('/encode/enqueue', {
         method: 'POST',
         body: JSON.stringify({ videoIds: encodeVideoIds, presetId, replaceOriginal, quality }),
       });
-      toast(`${encodeVideoIds.length} job(s) ajouté(s)`, 'success');
+      const nJobs = (r.jobs || []).length;
+      const nSkipped = (r.skipped || []).length;
+      let msg = `${nJobs} job(s) ajouté(s)`;
+      if (nSkipped > 0) msg += `, ${nSkipped} ignoré(s) (déjà dans le codec cible)`;
+      toast(msg, nJobs > 0 ? 'success' : 'info');
       $('#encode-modal').style.display = 'none';
       libSelected.clear();
       updateSelectionBar();

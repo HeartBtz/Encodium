@@ -879,6 +879,24 @@ async function processJob(job) {
     let newSize = 0;
     try { const st = await fsp.stat(tmpFile); newSize = st.size; } catch {}
 
+    // ── Size guard — reject encodes that are larger than the original ──
+    const origSize = video.size || 0;
+    if (origSize > 0 && newSize >= origSize) {
+      const pctBigger = ((newSize / origSize - 1) * 100).toFixed(1);
+      const msg = `Output (${(newSize / 1e6).toFixed(1)} MB) is ${pctBigger}% larger than original (${(origSize / 1e6).toFixed(1)} MB) — discarding encode, keeping original`;
+      jobLog.warn(msg);
+      logger.warn('encoder', `Job #${job.id}: ${msg}`);
+      try { await fsp.unlink(tmpFile); } catch {}
+      tmpFile = null; // prevent double-unlink in finally
+      await pool.query(
+        "UPDATE encode_jobs SET status='done', output_path=NULL, output_size=0, error=?, ended_at=NOW() WHERE id=?",
+        [`Skipped: output larger than original (+${pctBigger}%)`, job.id]
+      );
+      broadcast('job_update', { id: job.id, status: 'done', video_id: job.video_id, skipped: true,
+        reason: `Fichier encodé plus gros (+${pctBigger}%), original conservé` });
+      return;
+    }
+
     if (replaceOriginal) {
       try {
         const targetPath = path.join(path.dirname(inFile), `${baseName}${ext}`);
@@ -1116,8 +1134,21 @@ async function enqueue(video_id, presetId, replaceOriginal = false, quality = 'g
   if (!preset) throw new Error(`Unknown preset: ${presetId}`);
 
   const pool = db.getPool();
-  const [[video]] = await pool.query('SELECT size FROM videos WHERE id=?', [video_id]);
-  const fileSize = video ? video.size || 0 : 0;
+  const [[video]] = await pool.query('SELECT size, codec FROM videos WHERE id=?', [video_id]);
+  if (!video) throw new Error(`Video ${video_id} not found`);
+  const fileSize = video.size || 0;
+
+  // ── Smart skip: don't re-encode if already in target codec ──
+  const currentCodec = (video.codec || '').toLowerCase();
+  const targetCodec = preset.codec; // 'h265' or 'av1'
+  const codecMatch = (
+    (targetCodec === 'h265' && (currentCodec === 'hevc' || currentCodec === 'h265')) ||
+    (targetCodec === 'av1'  && currentCodec === 'av1')
+  );
+  if (codecMatch) {
+    logger.info('encoder', `Skip video ${video_id}: already ${currentCodec} (target: ${targetCodec})`);
+    return { skipped: true, video_id, reason: `already ${currentCodec}` };
+  }
 
   const [result] = await pool.query(
     "INSERT INTO encode_jobs (video_id, preset_id, preset_json, replace_original, quality, status, file_size_before) VALUES (?,?,?,?,?,?,?)",
@@ -1131,11 +1162,16 @@ async function enqueue(video_id, presetId, replaceOriginal = false, quality = 'g
 }
 
 async function enqueueBatch(videoIds, presetId, replaceOriginal = false, quality = 'good') {
-  const ids = [];
+  const results = { jobs: [], skipped: [] };
   for (const vid of videoIds) {
-    ids.push(await enqueue(vid, presetId, replaceOriginal, quality));
+    const r = await enqueue(vid, presetId, replaceOriginal, quality);
+    if (r && typeof r === 'object' && r.skipped) {
+      results.skipped.push(r);
+    } else {
+      results.jobs.push(r);
+    }
   }
-  return ids;
+  return results;
 }
 
 function cancelJob(jobId) {

@@ -326,8 +326,8 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
     if (!presetId) return res.status(400).json({ error: 'presetId required' });
     const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
     if (!ids.length) return res.status(400).json({ error: 'videoIds required' });
-    const jobIds = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, quality || 'good');
-    res.json({ jobs: jobIds });
+    const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, quality || 'good');
+    res.json({ jobs: result.jobs, skipped: result.skipped });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
