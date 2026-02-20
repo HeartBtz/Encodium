@@ -257,10 +257,29 @@ router.get('/stats', requireAuth, async (req, res) => {
    THUMBNAILS
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/thumb/:id', (req, res) => {
-  const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${req.params.id}.jpg`);
+router.get('/thumb/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${id}.jpg`);
+
+  // Already exists → serve immediately
   if (fs.existsSync(thumbPath)) return res.sendFile(thumbPath);
-  res.status(404).end();
+
+  // Generate on the fly
+  try {
+    const pool = db.getPool();
+    const [[video]] = await pool.query('SELECT file_path FROM videos WHERE id=?', [id]);
+    if (!video || !video.file_path) return res.status(404).end();
+
+    const result = await scanner.generateThumb(video.file_path, id);
+    if (result && fs.existsSync(thumbPath)) {
+      // Update DB so we know it exists
+      await pool.query('UPDATE videos SET thumb_path=? WHERE id=?', [thumbPath, id]);
+      return res.sendFile(thumbPath);
+    }
+    res.status(404).end();
+  } catch {
+    res.status(404).end();
+  }
 });
 
 /* ═══════════════════════════════════════════════════════════════
