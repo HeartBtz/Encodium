@@ -384,7 +384,68 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
 
   return errors;
 }
+/* ── Refresh video metadata after encode ─────────────────── */
 
+async function refreshVideoMeta(videoId, filePath, jobLog) {
+  try {
+    const info = await ffprobeFullInfo(filePath);
+    if (!info) { jobLog.warn('Could not re-probe output for metadata refresh'); return; }
+
+    const vStream = (info.streams || []).find(s => s.codec_type === 'video');
+    const aStream = (info.streams || []).find(s => s.codec_type === 'audio');
+    const fmt = info.format || {};
+
+    const meta = {
+      duration: parseFloat(fmt.duration) || null,
+      codec: vStream ? vStream.codec_name : null,
+      width: vStream ? vStream.width : null,
+      height: vStream ? vStream.height : null,
+      bitrate: fmt.bit_rate ? Math.round(parseInt(fmt.bit_rate, 10) / 1000) : null,
+      fps: null,
+      audioCodec: aStream ? aStream.codec_name : null,
+      audioSampleRate: aStream ? parseInt(aStream.sample_rate, 10) || null : null,
+      audioChannels: aStream ? aStream.channels : null,
+    };
+
+    // Parse FPS from r_frame_rate (e.g. "24000/1001")
+    if (vStream && vStream.r_frame_rate) {
+      const parts = vStream.r_frame_rate.split('/');
+      if (parts.length === 2 && parseInt(parts[1], 10) > 0) {
+        meta.fps = parseFloat((parseInt(parts[0], 10) / parseInt(parts[1], 10)).toFixed(3));
+      }
+    }
+
+    const pool = db.getPool();
+    await pool.query(
+      `UPDATE videos SET
+         file_path         = ?,
+         size              = ?,
+         duration          = COALESCE(?, duration),
+         codec             = COALESCE(?, codec),
+         width             = COALESCE(?, width),
+         height            = COALESCE(?, height),
+         bitrate           = COALESCE(?, bitrate),
+         fps               = COALESCE(?, fps),
+         audio_codec       = COALESCE(?, audio_codec),
+         audio_sample_rate = COALESCE(?, audio_sample_rate),
+         audio_channels    = COALESCE(?, audio_channels),
+         filename          = ?
+       WHERE id = ?`,
+      [
+        filePath,
+        (await fsp.stat(filePath).catch(() => ({ size: 0 }))).size,
+        meta.duration, meta.codec, meta.width, meta.height, meta.bitrate,
+        meta.fps, meta.audioCodec, meta.audioSampleRate, meta.audioChannels,
+        path.basename(filePath),
+        videoId,
+      ]
+    );
+
+    jobLog.info(`Video #${videoId} metadata refreshed: codec=${meta.codec}, ${meta.width}x${meta.height}, ${meta.duration?.toFixed(1)}s, ${meta.bitrate}kbps`);
+  } catch (e) {
+    jobLog.warn(`Failed to refresh video metadata: ${e.message}`);
+  }
+}
 /* ─── Core encode worker (v2) ────────────────────────────────── */
 
 async function processJob(job) {
@@ -568,8 +629,8 @@ async function processJob(job) {
             jobLog.warn(`Could not remove original (${unlinkErr.message}), new file is safe at ${targetPath}`);
           }
         }
-        await pool.query('UPDATE videos SET file_path=?, size=?, codec=? WHERE id=?',
-          [targetPath, newSize, isAv1 ? 'av1' : 'hevc', job.video_id]);
+        // Re-probe output and update ALL video metadata (codec, size, duration, resolution, etc.)
+        await refreshVideoMeta(job.video_id, targetPath, jobLog);
         jobLog.info(`Replaced original → ${targetPath}`);
       } catch (e) {
         jobLog.error(`Replace-original failed: ${e.message}`);
@@ -578,6 +639,8 @@ async function processJob(job) {
     } else {
       try {
         await moveFile(tmpFile, outFile);
+        // Even without replace-original, update video metadata to reflect the new encoded file
+        await refreshVideoMeta(job.video_id, outFile, jobLog);
         jobLog.info(`Output → ${outFile}`);
       } catch (e) {
         jobLog.error(`Move failed: ${e.message}`);
@@ -590,7 +653,7 @@ async function processJob(job) {
       "UPDATE encode_jobs SET status='done', output_path=?, output_size=?, ended_at=NOW() WHERE id=?",
       [finalPath, newSize, job.id]
     );
-    broadcast('job_update', { id: job.id, status: 'done', output_path: finalPath, output_size: newSize });
+    broadcast('job_update', { id: job.id, status: 'done', output_path: finalPath, output_size: newSize, video_id: job.video_id });
 
     const savings = video.size > 0 ? ((1 - newSize / video.size) * 100).toFixed(1) : '?';
     jobLog.info(`=== Job #${job.id} DONE — ${(newSize / 1e6).toFixed(1)} MB (${savings}% savings) ===`);

@@ -626,6 +626,8 @@
     if (d.status === 'done') {
       toast(`Encodage terminé : job #${d.id}`, 'success');
       loadDashboard();
+      // Refresh library to show updated codec/size/metadata
+      loadLibrary();
     } else if (d.status === 'error') {
       toast(`Erreur encodage : job #${d.id} – ${d.error || ''}`, 'error');
     }
