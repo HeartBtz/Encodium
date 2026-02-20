@@ -23,10 +23,10 @@
         <input type="email" id="login-email" class="input" placeholder="admin@example.com" required autocomplete="email">
       </div>
       <div class="form-group">
-        <label for="login-pass">Mot de passe</label>
+        <label for="login-pass" data-i18n="login.password">Mot de passe</label>
         <input type="password" id="login-pass" class="input" placeholder="••••••••" required autocomplete="current-password">
       </div>
-      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px">Connexion</button>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" data-i18n="login.submit">Connexion</button>
       <p id="login-error" class="alert alert-error" style="display:none;margin-top:12px"></p>
     </form>
   </div>
@@ -40,10 +40,11 @@
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
       Encodium
     </a>
-    <span class="admin-title">Administration</span>
+    <span class="admin-title" data-i18n="nav.admin">Administration</span>
     <div class="admin-nav-right">
+      <select id="lang-select" class="input" style="width:auto;padding:2px 6px;font-size:12px;margin-right:8px"></select>
       <span id="adminUser" class="admin-user-badge"></span>
-      <button class="btn btn-ghost btn-sm btn-danger-text" id="btn-logout">Déconnexion</button>
+      <button class="btn btn-ghost btn-sm btn-danger-text" id="btn-logout" data-i18n="nav.logout">Déconnexion</button>
     </div>
   </nav>
 
@@ -52,23 +53,23 @@
       <nav class="admin-sidenav">
         <button class="sidenav-item active" data-tab="dashboard">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-          Tableau de bord
+          <span data-i18n="nav.dashboard">Tableau de bord</span>
         </button>
         <button class="sidenav-item" data-tab="library">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M10 8l6 4-6 4V8z" fill="currentColor"/></svg>
-          Bibliothèque
+          <span data-i18n="nav.library">Bibliothèque</span>
         </button>
         <button class="sidenav-item" data-tab="hardware">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/></svg>
-          Matériel
+          <span data-i18n="nav.hardware">Matériel</span>
         </button>
         <button class="sidenav-item" data-tab="logs">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          Logs
+          <span data-i18n="nav.logs">Logs</span>
         </button>
         <button class="sidenav-item" data-tab="settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Paramètres
+          <span data-i18n="nav.settings">Paramètres</span>
         </button>
       </nav>
     </aside>
@@ -81,23 +82,23 @@
         <div class="stats-grid">
           <div class="stat-card stat-blue">
             <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M10 8l6 4-6 4V8z"/></svg></div>
-            <div class="stat-content"><div class="stat-val" id="stat-videos">—</div><div class="stat-lbl">Vidéos</div></div>
+            <div class="stat-content"><div class="stat-val" id="stat-videos">—</div><div class="stat-lbl" data-i18n="dash.videos">Vidéos</div></div>
           </div>
           <div class="stat-card stat-green">
             <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div>
-            <div class="stat-content"><div class="stat-val" id="stat-size">—</div><div class="stat-lbl">Taille totale</div></div>
+            <div class="stat-content"><div class="stat-val" id="stat-size">—</div><div class="stat-lbl" data-i18n="dash.total_size">Taille totale</div></div>
           </div>
           <div class="stat-card stat-yellow">
             <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-            <div class="stat-content"><div class="stat-val" id="stat-duration">—</div><div class="stat-lbl">Durée totale</div></div>
+            <div class="stat-content"><div class="stat-val" id="stat-duration">—</div><div class="stat-lbl" data-i18n="dash.total_duration">Durée totale</div></div>
           </div>
           <div class="stat-card stat-red">
             <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
-            <div class="stat-content"><div class="stat-val" id="stat-jobs">—</div><div class="stat-lbl">Jobs encodage</div></div>
+            <div class="stat-content"><div class="stat-val" id="stat-jobs">—</div><div class="stat-lbl" data-i18n="dash.jobs">Jobs encodage</div></div>
           </div>
           <div class="stat-card stat-purple">
             <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
-            <div class="stat-content"><div class="stat-val" id="stat-saved">—</div><div class="stat-lbl">Espace gagné</div></div>
+            <div class="stat-content"><div class="stat-val" id="stat-saved">—</div><div class="stat-lbl" data-i18n="dash.space_saved">Espace gagné</div></div>
           </div>
         </div>
 
@@ -113,23 +114,23 @@
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-purple"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
-            <div><h3>Chemins configurés</h3></div>
+            <div><h3 data-i18n="dash.configured_paths">Chemins configurés</h3></div>
           </div>
           <div class="paths-info">
-            <div class="path-row"><span class="path-label">Médias</span><code id="path-media">—</code></div>
-            <div class="path-row"><span class="path-label">Miniatures</span><code id="path-thumbs">—</code></div>
-            <div class="path-row"><span class="path-label">Encodage</span><code id="path-encode">—</code></div>
+            <div class="path-row"><span class="path-label" data-i18n="dash.path_media">Médias</span><code id="path-media">—</code></div>
+            <div class="path-row"><span class="path-label" data-i18n="dash.path_thumbs">Miniatures</span><code id="path-thumbs">—</code></div>
+            <div class="path-row"><span class="path-label" data-i18n="dash.path_encode">Encodage</span><code id="path-encode">—</code></div>
           </div>
         </div>
 
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg></div>
-            <div><h3>Scanner les médias</h3><p class="muted">Scanne le dossier médias et indexe les nouveaux fichiers vidéo.</p></div>
+            <div><h3 data-i18n="dash.scan_title">Scanner les médias</h3><p class="muted" data-i18n="dash.scan_desc">Scanne le dossier médias et indexe les nouveaux fichiers vidéo.</p></div>
           </div>
           <div class="card-actions">
-            <button class="btn btn-primary" id="btn-scan">▶ Démarrer le scan</button>
-            <button class="btn btn-danger hidden" id="btn-scan-cancel">⏹ Annuler</button>
+            <button class="btn btn-primary" id="btn-scan" data-i18n="dash.scan_start">▶ Démarrer le scan</button>
+            <button class="btn btn-danger hidden" id="btn-scan-cancel" data-i18n="dash.scan_cancel">⏹ Annuler</button>
           </div>
           <div id="scan-progress" class="progress-wrap hidden">
             <div class="progress-bar"><div class="progress-fill" id="scan-bar"></div></div>
@@ -140,9 +141,9 @@
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-orange"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg></div>
-            <div><h3>Synchroniser la base</h3><p class="muted">Supprime les entrées orphelines et ajoute les nouveaux fichiers sans tout rescanner.</p></div>
+            <div><h3 data-i18n="dash.sync_title">Synchroniser la base</h3><p class="muted" data-i18n="dash.sync_desc">Supprime les entrées orphelines et ajoute les nouveaux fichiers sans tout rescanner.</p></div>
           </div>
-          <div class="card-actions"><button class="btn btn-primary" id="btn-sync">🔄 Synchroniser</button></div>
+          <div class="card-actions"><button class="btn btn-primary" id="btn-sync" data-i18n="dash.sync_start">🔄 Synchroniser</button></div>
           <div id="sync-progress" class="progress-wrap hidden">
             <div class="progress-bar"><div class="progress-fill" id="sync-bar"></div></div>
             <span id="sync-detail"></span>
@@ -152,9 +153,9 @@
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v9l4 2"/><circle cx="12" cy="12" r="10"/></svg></div>
-            <div><h3>Enrichir les métadonnées</h3><p class="muted">Extrait codec, durée, résolution via ffprobe.</p></div>
+            <div><h3 data-i18n="dash.enrich_title">Enrichir les métadonnées</h3><p class="muted" data-i18n="dash.enrich_desc">Extrait codec, durée, résolution via ffprobe.</p></div>
           </div>
-          <div class="card-actions"><button class="btn btn-primary" id="btn-enrich">▶ Enrichir</button></div>
+          <div class="card-actions"><button class="btn btn-primary" id="btn-enrich" data-i18n="dash.enrich_start">▶ Enrichir</button></div>
           <div id="enrich-progress" class="progress-wrap hidden">
             <div class="progress-bar"><div class="progress-fill" id="enrich-bar"></div></div>
             <span id="enrich-detail"></span>
@@ -164,9 +165,9 @@
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-yellow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
-            <div><h3>Générer les miniatures</h3><p class="muted">Crée les thumbnails manquantes.</p></div>
+            <div><h3 data-i18n="dash.thumbs_title">Générer les miniatures</h3><p class="muted" data-i18n="dash.thumbs_desc">Crée les thumbnails manquantes.</p></div>
           </div>
-          <div class="card-actions"><button class="btn btn-primary" id="btn-gen-thumbs">▶ Générer</button></div>
+          <div class="card-actions"><button class="btn btn-primary" id="btn-gen-thumbs" data-i18n="dash.thumbs_start">▶ Générer</button></div>
           <div id="thumbs-progress" class="progress-wrap hidden">
             <div class="progress-bar"><div class="progress-fill" id="thumbs-bar"></div></div>
             <span id="thumbs-detail"></span>
@@ -176,7 +177,7 @@
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-purple"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
-            <div><h3>Distribution des codecs</h3></div>
+            <div><h3 data-i18n="dash.codec_dist">Distribution des codecs</h3></div>
           </div>
           <div id="codec-chart" class="codec-stats-grid"></div>
         </div>
@@ -185,7 +186,7 @@
         <div class="admin-card" id="stats-charts-card" style="display:none">
           <div class="card-header">
             <div class="card-icon ci-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
-            <div><h3>Historique d'encodage</h3></div>
+            <div><h3 data-i18n="dash.encode_history">Historique d'encodage</h3></div>
           </div>
           <div style="padding:12px 16px;display:flex;gap:16px;flex-wrap:wrap">
             <div style="flex:1;min-width:300px"><canvas id="chart-savings"></canvas></div>
@@ -196,44 +197,44 @@
         <div class="admin-card" style="border-color:rgba(239,68,68,.25)">
           <div class="card-header">
             <div class="card-icon ci-red"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></div>
-            <div><h3>Vider la base de données</h3><p class="muted">Supprime toutes les vidéos et jobs. Action irréversible.</p></div>
+            <div><h3 data-i18n="dash.clear_db_title">Vider la base de données</h3><p class="muted" data-i18n="dash.clear_db_desc">Supprime toutes les vidéos et jobs. Action irréversible.</p></div>
           </div>
-          <div class="card-actions"><button class="btn btn-danger" id="btn-clear-db">🗑 Vider la BDD</button></div>
+          <div class="card-actions"><button class="btn btn-danger" id="btn-clear-db" data-i18n="dash.clear_db_btn">🗑 Vider la BDD</button></div>
         </div>
       </section>
 
       <!-- LIBRARY -->
       <section id="tab-library" class="admin-tab">
         <div class="tab-title-row">
-          <h2>Bibliothèque vidéo</h2>
+          <h2 data-i18n="lib.title">Bibliothèque vidéo</h2>
           <div class="tab-title-actions">
-            <input type="search" id="lib-search" class="input input-search" placeholder="Rechercher…">
+            <input type="search" id="lib-search" class="input input-search" placeholder="Rechercher…" data-i18n-placeholder="lib.search">
           </div>
         </div>
         <div class="mb-filters">
-          <select id="lib-folder" class="input" style="max-width:220px"><option value="">Tous les dossiers</option></select>
+          <select id="lib-folder" class="input" style="max-width:220px"><option value="" data-i18n="lib.all_folders">Tous les dossiers</option></select>
           <select id="lib-codec" class="input" style="max-width:140px">
-            <option value="">Tous codecs</option>
+            <option value="" data-i18n="lib.all_codecs">Tous codecs</option>
             <option value="h264">H.264</option>
             <option value="hevc">HEVC</option>
             <option value="av1">AV1</option>
             <option value="vp9">VP9</option>
-            <option value="unknown">Inconnu</option>
+            <option value="unknown" data-i18n="lib.unknown">Inconnu</option>
           </select>
           <select id="lib-sort" class="input" style="max-width:140px">
-            <option value="filename">Nom</option><option value="size">Taille</option><option value="duration">Durée</option><option value="width">Résolution</option><option value="created_at">Date</option>
+            <option value="filename" data-i18n="lib.sort_name">Nom</option><option value="size" data-i18n="lib.sort_size">Taille</option><option value="duration" data-i18n="lib.sort_duration">Durée</option><option value="width" data-i18n="lib.sort_resolution">Résolution</option><option value="created_at" data-i18n="lib.sort_date">Date</option>
           </select>
-          <button id="lib-order-btn" class="btn btn-sm" title="Ordre de tri">↕</button>
+          <button id="lib-order-btn" class="btn btn-sm" title="Ordre de tri" data-i18n-title="lib.order_title">↕</button>
         </div>
         <div id="lib-selection-bar" class="mb-toolbar hidden">
           <span id="lib-sel-count" class="dup-sel-count">0 sélectionné(s)</span>
-          <button id="lib-encode-sel" class="btn btn-sm btn-primary">⚡ Encoder</button>
-          <button id="lib-force-encode-sel" class="btn btn-sm btn-warning">⚡ Forcer l'encodage</button>
-          <button id="lib-delete-sel" class="btn btn-sm btn-danger">🗑 Supprimer</button>
+          <button id="lib-encode-sel" class="btn btn-sm btn-primary" data-i18n="lib.encode">⚡ Encoder</button>
+          <button id="lib-force-encode-sel" class="btn btn-sm btn-warning" data-i18n="lib.force_encode">⚡ Forcer l'encodage</button>
+          <button id="lib-delete-sel" class="btn btn-sm btn-danger" data-i18n="lib.delete">🗑 Supprimer</button>
           <span class="dup-toolbar-sep"></span>
-          <button id="lib-sel-all" class="btn btn-sm">Tout sélect. (page)</button>
-          <button id="lib-sel-all-filtered" class="btn btn-sm btn-primary">☑ Tout sélect.</button>
-          <button id="lib-sel-none" class="btn btn-sm">✗ Décocher</button>
+          <button id="lib-sel-all" class="btn btn-sm" data-i18n="lib.sel_page">Tout sélect. (page)</button>
+          <button id="lib-sel-all-filtered" class="btn btn-sm btn-primary" data-i18n="lib.sel_all">☑ Tout sélect.</button>
+          <button id="lib-sel-none" class="btn btn-sm" data-i18n="lib.deselect">✗ Décocher</button>
         </div>
         <div id="lib-grid" class="mb-grid"></div>
         <div id="lib-pagination" class="pagination"></div>
@@ -243,13 +244,13 @@
           <div class="card-header" style="cursor:pointer" id="encode-panel-toggle">
             <div style="display:flex;align-items:center;gap:8px">
               <div class="card-icon ci-red"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
-              <div><h3>File d'encodage</h3></div>
+              <div><h3 data-i18n="queue.title">File d'encodage</h3></div>
               <span id="encode-badge" class="enc-badge" style="display:none"></span>
             </div>
             <div class="tab-title-actions">
               <div class="enc-workers-label">Workers : <input type="number" id="worker-count" min="1" max="8" value="2" class="input input-xs" onclick="event.stopPropagation()"> <button id="btn-set-workers" class="btn btn-sm" onclick="event.stopPropagation()">OK</button></div>
-              <button id="btn-cancel-all" class="btn btn-sm btn-danger" onclick="event.stopPropagation()">⏹ Tout annuler</button>
-              <button id="btn-clear-queue" class="btn btn-sm btn-ghost" onclick="event.stopPropagation()">🧹 Vider la file</button>
+              <button id="btn-cancel-all" class="btn btn-sm btn-danger" onclick="event.stopPropagation()" data-i18n="queue.cancel_all">⏹ Tout annuler</button>
+              <button id="btn-clear-queue" class="btn btn-sm btn-ghost" onclick="event.stopPropagation()" data-i18n="queue.clear">🧹 Vider la file</button>
             </div>
           </div>
           <div id="encode-panel-body">
@@ -261,21 +262,21 @@
 
       <!-- HARDWARE -->
       <section id="tab-hardware" class="admin-tab">
-        <div class="tab-title-row"><h2>Détection matérielle</h2><div class="tab-title-actions"><button id="btn-hw-refresh" class="btn btn-sm">🔄 Rafraîchir</button></div></div>
+        <div class="tab-title-row"><h2 data-i18n="hw.title">Détection matérielle</h2><div class="tab-title-actions"><button id="btn-hw-refresh" class="btn btn-sm" data-i18n="hw.refresh">🔄 Rafraîchir</button></div></div>
         <div id="hw-info" class="hw-info"></div>
-        <h3 style="margin:20px 0 12px;font-size:15px;color:var(--a-text)">Presets disponibles</h3>
+        <h3 style="margin:20px 0 12px;font-size:15px;color:var(--a-text)" data-i18n="hw.presets_available">Presets disponibles</h3>
         <div id="hw-presets" class="enc-jobs-list"></div>
       </section>
 
       <!-- LOGS -->
       <section id="tab-logs" class="admin-tab">
         <div class="tab-title-row">
-          <h2>Logs en temps réel</h2>
+          <h2 data-i18n="logs.title">Logs en temps réel</h2>
           <div class="tab-title-actions">
-            <select id="log-level-filter" class="input" style="width:110px"><option value="">Tous</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option><option value="success">Succès</option></select>
-            <select id="log-source-filter" class="input" style="width:120px"><option value="">Sources</option><option value="scanner">Scanner</option><option value="enrich">Enrich</option><option value="thumbs">Thumbs</option><option value="encoder">Encoder</option></select>
-            <label class="checkbox-label"><input type="checkbox" id="log-autoscroll" checked> Auto-scroll</label>
-            <button id="btn-clear-logs" class="btn btn-sm btn-ghost">🧹 Vider</button>
+            <select id="log-level-filter" class="input" style="width:110px"><option value="" data-i18n="logs.all">Tous</option><option value="debug">Debug</option><option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option><option value="success" data-i18n="logs.success">Succès</option></select>
+            <select id="log-source-filter" class="input" style="width:120px"><option value="" data-i18n="logs.sources">Sources</option><option value="scanner">Scanner</option><option value="enrich">Enrich</option><option value="thumbs">Thumbs</option><option value="encoder">Encoder</option></select>
+            <label class="checkbox-label"><input type="checkbox" id="log-autoscroll" checked> <span data-i18n="logs.autoscroll">Auto-scroll</span></label>
+            <button id="btn-clear-logs" class="btn btn-sm btn-ghost" data-i18n="logs.clear">🧹 Vider</button>
           </div>
         </div>
         <div id="log-container" class="log-box" style="max-height:calc(100vh - 160px);min-height:300px"></div>
@@ -283,20 +284,20 @@
 
       <!-- SETTINGS -->
       <section id="tab-settings" class="admin-tab">
-        <div class="tab-title-row"><h2>Paramètres</h2></div>
+        <div class="tab-title-row"><h2 data-i18n="settings.title">Paramètres</h2></div>
 
         <!-- Schedule -->
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-            <div><h3>Planification d'encodage</h3><p class="muted">Limiter l'encodage à une plage horaire quotidienne.</p></div>
+            <div><h3 data-i18n="settings.schedule_title">Planification d'encodage</h3><p class="muted" data-i18n="settings.schedule_desc">Limiter l'encodage à une plage horaire quotidienne.</p></div>
           </div>
           <div class="form-row" style="padding:12px 16px;gap:12px;align-items:center;flex-wrap:wrap">
-            <label class="checkbox-label"><input type="checkbox" id="schedule-enabled"> Activer la planification</label>
+            <label class="checkbox-label"><input type="checkbox" id="schedule-enabled"> <span data-i18n="settings.schedule_enable">Activer la planification</span></label>
             <div class="form-inline" id="schedule-fields" style="display:none;gap:8px;align-items:center">
-              <label>De <input type="number" id="schedule-start" class="input input-xs" min="0" max="23" value="0" style="width:60px">h</label>
-              <label>à <input type="number" id="schedule-end" class="input input-xs" min="1" max="24" value="24" style="width:60px">h</label>
-              <button class="btn btn-sm btn-primary" id="btn-save-schedule">💾 Enregistrer</button>
+              <label><span data-i18n="settings.schedule_from">De</span> <input type="number" id="schedule-start" class="input input-xs" min="0" max="23" value="0" style="width:60px">h</label>
+              <label><span data-i18n="settings.schedule_to">à</span> <input type="number" id="schedule-end" class="input input-xs" min="1" max="24" value="24" style="width:60px">h</label>
+              <button class="btn btn-sm btn-primary" id="btn-save-schedule" data-i18n="settings.save">💾 Enregistrer</button>
             </div>
           </div>
         </div>
@@ -305,15 +306,15 @@
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-orange"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div>
-            <div><h3>Notifications (Webhook)</h3><p class="muted">Recevoir une notification Discord/HTTP à la fin de la file d'encodage.</p></div>
+            <div><h3 data-i18n="settings.webhook_title">Notifications (Webhook)</h3><p class="muted" data-i18n="settings.webhook_desc">Recevoir une notification Discord/HTTP à la fin de la file d'encodage.</p></div>
           </div>
           <div style="padding:12px 16px">
-            <label class="checkbox-label" style="margin-bottom:10px"><input type="checkbox" id="webhook-enabled"> Activer les notifications webhook</label>
+            <label class="checkbox-label" style="margin-bottom:10px"><input type="checkbox" id="webhook-enabled"> <span data-i18n="settings.webhook_enable">Activer les notifications webhook</span></label>
             <div class="form-group" style="margin-top:8px">
-              <label>URL du webhook</label>
+              <label data-i18n="settings.webhook_url">URL du webhook</label>
               <input type="url" id="webhook-url" class="input" placeholder="https://discord.com/api/webhooks/...">
             </div>
-            <button class="btn btn-sm btn-primary" id="btn-save-webhook" style="margin-top:4px">💾 Enregistrer</button>
+            <button class="btn btn-sm btn-primary" id="btn-save-webhook" style="margin-top:4px" data-i18n="settings.save">💾 Enregistrer</button>
           </div>
         </div>
 
@@ -321,24 +322,24 @@
         <div class="admin-card">
           <div class="card-header">
             <div class="card-icon ci-green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
-            <div><h3>Presets personnalisés</h3><p class="muted">Créer des presets d'encodage réutilisables.</p></div>
+            <div><h3 data-i18n="settings.presets_title">Presets personnalisés</h3><p class="muted" data-i18n="settings.presets_desc">Créer des presets d'encodage réutilisables.</p></div>
           </div>
           <div style="padding:12px 16px">
             <div id="custom-presets-list" class="enc-jobs-list" style="margin-bottom:12px"></div>
             <details class="custom-preset-form">
-              <summary class="btn btn-sm btn-primary" style="cursor:pointer">+ Nouveau preset</summary>
+              <summary class="btn btn-sm btn-primary" style="cursor:pointer" data-i18n="settings.preset_new">+ Nouveau preset</summary>
               <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
-                <div class="form-group"><label>Nom</label><input type="text" id="cp-name" class="input" placeholder="Mon preset"></div>
+                <div class="form-group"><label data-i18n="settings.preset_name">Nom</label><input type="text" id="cp-name" class="input" placeholder="Mon preset"></div>
                 <div style="display:flex;gap:8px">
-                  <div class="form-group" style="flex:1"><label>Codec</label><select id="cp-codec" class="input"><option value="h265">H.265</option><option value="av1">AV1</option></select></div>
-                  <div class="form-group" style="flex:1"><label>CQ/CRF</label><input type="number" id="cp-cq" class="input" value="23" min="0" max="63"></div>
+                  <div class="form-group" style="flex:1"><label data-i18n="settings.preset_codec">Codec</label><select id="cp-codec" class="input"><option value="h265">H.265</option><option value="av1">AV1</option></select></div>
+                  <div class="form-group" style="flex:1"><label data-i18n="settings.preset_cq">CQ/CRF</label><input type="number" id="cp-cq" class="input" value="23" min="0" max="63"></div>
                 </div>
                 <div style="display:flex;gap:8px">
-                  <div class="form-group" style="flex:1"><label>Conteneur</label><select id="cp-container" class="input"><option value="auto">Auto</option><option value="mkv">MKV</option><option value="mp4">MP4</option></select></div>
-                  <div class="form-group" style="flex:1"><label>Résolution</label><select id="cp-downscale" class="input"><option value="">Originale</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option></select></div>
+                  <div class="form-group" style="flex:1"><label data-i18n="settings.preset_container">Conteneur</label><select id="cp-container" class="input"><option value="auto">Auto</option><option value="mkv">MKV</option><option value="mp4">MP4</option></select></div>
+                  <div class="form-group" style="flex:1"><label data-i18n="settings.preset_resolution">Résolution</label><select id="cp-downscale" class="input"><option value="">Originale</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option></select></div>
                 </div>
-                <label class="checkbox-label"><input type="checkbox" id="cp-tonemap"> HDR → SDR</label>
-                <button class="btn btn-sm btn-primary" id="btn-save-custom-preset">💾 Créer</button>
+                <label class="checkbox-label"><input type="checkbox" id="cp-tonemap"> <span data-i18n="settings.preset_tonemap">HDR → SDR</span></label>
+                <button class="btn btn-sm btn-primary" id="btn-save-custom-preset" data-i18n="settings.preset_create">💾 Créer</button>
               </div>
             </details>
           </div>
@@ -353,34 +354,34 @@
 <!-- ENCODE MODAL -->
 <div id="encode-modal" class="modal-overlay" style="display:none">
   <div class="modal">
-    <div class="modal-header"><h3>⚡ Encoder des vidéos</h3><button class="modal-close" id="encode-modal-close">✕</button></div>
+    <div class="modal-header"><h3 data-i18n="modal.encode_title">⚡ Encoder des vidéos</h3><button class="modal-close" id="encode-modal-close">✕</button></div>
     <div class="modal-body">
       <p id="encode-modal-info" style="margin-bottom:16px"></p>
-      <div class="form-group"><label>Preset</label><select id="encode-preset" class="input"></select></div>
+      <div class="form-group"><label data-i18n="modal.preset">Preset</label><select id="encode-preset" class="input"></select></div>
 
       <div class="form-group" id="container-group">
-        <label>Conteneur de sortie</label>
+        <label data-i18n="modal.container">Conteneur de sortie</label>
         <select id="encode-container" class="input">
-          <option value="auto">Auto (MKV pour AV1, MP4 sinon)</option>
-          <option value="mkv">MKV (Matroska)</option>
+          <option value="auto" data-i18n="modal.container_auto">Auto (MKV pour AV1, MP4 sinon)</option>
+          <option value="mkv" data-i18n="modal.container_mkv">MKV (Matroska)</option>
           <option value="mp4">MP4</option>
         </select>
       </div>
       <div class="form-group" id="downscale-group">
-        <label>Résolution de sortie</label>
+        <label data-i18n="modal.resolution">Résolution de sortie</label>
         <select id="encode-downscale" class="input">
-          <option value="">Originale (pas de changement)</option>
-          <option value="1080">1080p (Full HD)</option>
-          <option value="720">720p (HD)</option>
-          <option value="480">480p (SD)</option>
+          <option value="" data-i18n="modal.res_original">Originale (pas de changement)</option>
+          <option value="1080" data-i18n="modal.res_1080">1080p (Full HD)</option>
+          <option value="720" data-i18n="modal.res_720">720p (HD)</option>
+          <option value="480" data-i18n="modal.res_480">480p (SD)</option>
         </select>
       </div>
-      <label class="checkbox-label" style="margin-top:8px"><input type="checkbox" id="encode-tonemap"> HDR → SDR (tonemapping)</label>
-      <label class="checkbox-label" style="margin-top:8px"><input type="checkbox" id="encode-replace" checked> Remplacer les originaux</label>
+      <label class="checkbox-label" style="margin-top:8px"><input type="checkbox" id="encode-tonemap"> <span data-i18n="modal.tonemap">HDR → SDR (tonemapping)</span></label>
+      <label class="checkbox-label" style="margin-top:8px"><input type="checkbox" id="encode-replace" checked> <span data-i18n="modal.replace">Remplacer les originaux</span></label>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" id="encode-modal-cancel">Annuler</button>
-      <button class="btn btn-primary" id="encode-modal-submit">▶ Lancer</button>
+      <button class="btn btn-ghost" id="encode-modal-cancel" data-i18n="modal.cancel">Annuler</button>
+      <button class="btn btn-primary" id="encode-modal-submit" data-i18n="modal.submit">▶ Lancer</button>
     </div>
   </div>
 </div>
@@ -389,7 +390,7 @@
 <div id="player-modal" class="modal-overlay" style="display:none">
   <div class="modal" style="max-width:960px;width:95vw">
     <div class="modal-header">
-      <h3 id="player-title">Lecture vidéo</h3>
+      <h3 id="player-title" data-i18n="player.title">Lecture vidéo</h3>
       <button class="modal-close" id="player-modal-close">✕</button>
     </div>
     <div class="modal-body" style="padding:0;background:#000;border-radius:0 0 8px 8px">
@@ -399,6 +400,22 @@
 </div>
 
 <div id="toast-container" class="toast-container"></div>
+<script src="/js/i18n.js"></script>
+<script src="/lang/fr.js"></script>
+<script src="/lang/en.js"></script>
+<script src="/lang/de.js"></script>
+<script src="/lang/it.js"></script>
+<script src="/lang/es.js"></script>
+<script src="/lang/ru.js"></script>
+<script src="/lang/zh.js"></script>
+<script src="/lang/pt.js"></script>
+<script src="/lang/ja.js"></script>
+<script src="/lang/ko.js"></script>
+<script src="/lang/ar.js"></script>
+<script src="/lang/nl.js"></script>
+<script src="/lang/pl.js"></script>
+<script src="/lang/tr.js"></script>
+<script>i18n.init();</script>
 <script src="/js/app.js"></script>
 </body>
 </html>

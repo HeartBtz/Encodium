@@ -25,6 +25,7 @@
   // Logs
   const logEntries = [];
   const MAX_LOG = 500;
+  const t = (k, p) => i18n.t(k, p);
 
   /* ── Helpers ──────────────────────────────────────────── */
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
@@ -35,15 +36,15 @@
     if (token) headers.Authorization = `Bearer ${token}`;
     return fetch(`/api${path}`, { ...opts, headers })
       .then(async r => {
-        if (r.status === 401) { logout(); throw new Error('Session expirée'); }
+        if (r.status === 401) { logout(); throw new Error(t('error.session_expired')); }
         let j;
-        try { j = await r.json(); } catch { throw new Error(`Réponse invalide (${r.status})`); }
+        try { j = await r.json(); } catch { throw new Error(t('error.invalid_response', {status: r.status})); }
         if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
         return j;
       })
       .catch(err => {
         if (err.message === 'Session expirée') throw err;
-        if (err.name === 'TypeError') throw new Error('Connexion au serveur impossible');
+        if (err.name === 'TypeError') throw new Error(t('error.server_unreachable'));
         throw err;
       });
   }
@@ -92,6 +93,26 @@
     $('#app').style.display = 'none';
     if (sse) { sse.close(); sse = null; }
   }
+
+  /* ── Language selector ────────────────────────────────── */
+  (function initLangSelector() {
+    const sel = $('#lang-select');
+    if (!sel) return;
+    const langs = i18n.getLanguages();
+    sel.innerHTML = langs.map(l => `<option value="${l.code}">${l.flag} ${l.name}</option>`).join('');
+    sel.value = i18n.getLang();
+    sel.addEventListener('change', () => {
+      i18n.setLang(sel.value);
+      // Re-render dynamic content that uses t()
+      if (currentUser) {
+        loadDashboard();
+        loadLibrary();
+        loadEncodeQueue();
+        if ($('#tab-hardware').classList.contains('active')) loadHardware();
+        if ($('#tab-settings').classList.contains('active')) loadSettings();
+      }
+    });
+  })();
 
   function showApp() {
     $('#login-screen').style.display = 'none';
@@ -194,7 +215,7 @@
       $('#stat-duration').textContent = fmtDur(stats.videos.total_duration);
 
       const jb = stats.jobs;
-      const jobTxt = jb ? `${jb.total || 0} (${jb.encoding || 0} en cours)` : '0';
+      const jobTxt = jb ? t('dash.jobs_in_progress', {total: jb.total || 0, encoding: jb.encoding || 0}) : '0';
       $('#stat-jobs').textContent = jobTxt;
 
       // Encoding savings
@@ -208,17 +229,17 @@
         const ratio = enc.totalBefore > 0 ? (enc.totalAfter / enc.totalBefore * 100).toFixed(1) : '—';
         $('#savings-detail').innerHTML = `
           <div class="savings-grid">
-            <div class="savings-item"><span class="savings-label">Fichiers encodés</span><span class="savings-value">${enc.count}</span></div>
-            <div class="savings-item"><span class="savings-label">Taille avant</span><span class="savings-value">${fmtSize(enc.totalBefore)}</span></div>
-            <div class="savings-item"><span class="savings-label">Taille après</span><span class="savings-value">${fmtSize(enc.totalAfter)}</span></div>
-            <div class="savings-item"><span class="savings-label">Espace ${saved >= 0 ? 'gagné' : 'perdu'}</span><span class="savings-value ${saved >= 0 ? 'savings-positive' : 'savings-negative'}">${saved >= 0 ? '-' : '+'}${fmtSize(Math.abs(saved))} (${pct}%)</span></div>
-            <div class="savings-item"><span class="savings-label">Ratio moyen</span><span class="savings-value">${ratio}%</span></div>
+            <div class="savings-item"><span class="savings-label">${t('dash.files_encoded')}</span><span class="savings-value">${enc.count}</span></div>
+            <div class="savings-item"><span class="savings-label">${t('dash.size_before')}</span><span class="savings-value">${fmtSize(enc.totalBefore)}</span></div>
+            <div class="savings-item"><span class="savings-label">${t('dash.size_after')}</span><span class="savings-value">${fmtSize(enc.totalAfter)}</span></div>
+            <div class="savings-item"><span class="savings-label">${saved >= 0 ? t('dash.space_won') : t('dash.space_lost')}</span><span class="savings-value ${saved >= 0 ? 'savings-positive' : 'savings-negative'}">${saved >= 0 ? '-' : '+'}${fmtSize(Math.abs(saved))} (${pct}%)</span></div>
+            <div class="savings-item"><span class="savings-label">${t('dash.avg_ratio')}</span><span class="savings-value">${ratio}%</span></div>
           </div>
           <div class="savings-bar-wrap">
             <div class="savings-bar-bg">
               <div class="savings-bar-fill" style="width:${Math.min(100, Number(ratio))}%"></div>
             </div>
-            <div class="savings-bar-labels"><span>Après : ${fmtSize(enc.totalAfter)}</span><span>Avant : ${fmtSize(enc.totalBefore)}</span></div>
+            <div class="savings-bar-labels"><span>${t('dash.after_label', {size: fmtSize(enc.totalAfter)})}</span><span>${t('dash.before_label', {size: fmtSize(enc.totalBefore)})}</span></div>
           </div>`;
       } else {
         $('#stat-saved').textContent = '—';
@@ -237,18 +258,18 @@
       if (codecs && codecs.length) {
         grid.innerHTML = codecs.map(c => `
           <div class="codec-card">
-            <div class="cc-name">${escHtml(c.codec || 'inconnu')}</div>
+            <div class="cc-name">${escHtml(c.codec || t('lib.unknown'))}</div>
             <div class="cc-count">${c.count}</div>
             <div class="cc-size">${fmtSize(c.total_size)}</div>
           </div>
         `).join('');
       } else {
-        grid.innerHTML = '<p style="color:var(--a-text-muted);padding:12px">Aucune donnée codec</p>';
+        grid.innerHTML = `<p style="color:var(--a-text-muted);padding:12px">${t('dash.no_codec_data')}</p>`;
       }
 
       // Load encoding history charts
       loadStatsCharts();
-    } catch (e) { toast(`Erreur dashboard: ${e.message}`, 'error'); }
+    } catch (e) { toast(t('error.dashboard', {msg: e.message}), 'error'); }
   }
 
   /* ── Stats Charts ─────────────────────────────────────── */
@@ -284,8 +305,8 @@
         data: {
           labels,
           datasets: [
-            { label: 'Espace gagné (GB)', data: savedData, backgroundColor: 'rgba(168,85,247,0.6)', borderColor: 'rgba(168,85,247,1)', borderWidth: 1 },
-            { label: 'Fichiers', data: countData, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: 'rgba(59,130,246,1)', borderWidth: 1, yAxisID: 'y1' },
+            { label: t('chart.space_saved_gb'), data: savedData, backgroundColor: 'rgba(168,85,247,0.6)', borderColor: 'rgba(168,85,247,1)', borderWidth: 1 },
+            { label: t('chart.files'), data: countData, backgroundColor: 'rgba(59,130,246,0.5)', borderColor: 'rgba(59,130,246,1)', borderWidth: 1, yAxisID: 'y1' },
           ],
         },
         options: { ...chartOpts, scales: { ...chartOpts.scales, y1: { position: 'right', ticks: { color: '#888' }, grid: { drawOnChartArea: false } } } },
@@ -300,8 +321,8 @@
         data: {
           labels,
           datasets: [
-            { label: 'Avant (GB)', data: beforeData, borderColor: 'rgba(239,68,68,0.8)', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 },
-            { label: 'Après (GB)', data: afterData, borderColor: 'rgba(34,197,94,0.8)', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3 },
+            { label: t('chart.before_gb'), data: beforeData, borderColor: 'rgba(239,68,68,0.8)', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 },
+            { label: t('chart.after_gb'), data: afterData, borderColor: 'rgba(34,197,94,0.8)', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3 },
           ],
         },
         options: chartOpts,
@@ -315,7 +336,7 @@
   $('#btn-scan').addEventListener('click', async () => {
     try {
       await api('/scan', { method: 'POST' });
-      toast('Scan lancé', 'success');
+      toast(t('toast.scan_started'), 'success');
       startScanPoll();
     } catch (e) { toast(e.message, 'error'); }
   });
@@ -323,7 +344,7 @@
   $('#btn-scan-cancel').addEventListener('click', async () => {
     try {
       await api('/scan/cancel', { method: 'POST' });
-      toast('Annulation demandée', 'warn');
+      toast(t('toast.cancel_requested'), 'warn');
     } catch (e) { toast(e.message, 'error'); }
   });
 
@@ -345,12 +366,12 @@
         if (s.running) {
           const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
           bar.style.width = pct + '%';
-          detail.textContent = `${s.done}/${s.total} – ${s.currentFolder || '…'} (${s.skipped} ignorés, ${s.errors} erreurs)`;
+          detail.textContent = t('scan.progress', {done:s.done, total:s.total, folder:s.currentFolder||'…', skipped:s.skipped, errors:s.errors});
         } else {
           clearInterval(scanPollTimer);
           scanPollTimer = null;
           bar.style.width = '100%';
-          detail.textContent = s.cancelled ? 'Scan annulé' : `Terminé — ${s.total} fichiers, ${s.errors} erreurs`;
+          detail.textContent = s.cancelled ? t('scan.cancelled') : t('scan.done', {total:s.total, errors:s.errors});
           btnCancel.classList.add('hidden');
           btnScan.disabled = false;
           setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
@@ -371,7 +392,7 @@
   $('#btn-sync').addEventListener('click', async () => {
     try {
       await api('/sync', { method: 'POST' });
-      toast('Synchronisation lancée', 'success');
+      toast(t('toast.sync_started'), 'success');
       startSyncPoll();
     } catch (e) { toast(e.message, 'error'); }
   });
@@ -392,12 +413,12 @@
         if (s.running) {
           const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
           bar.style.width = pct + '%';
-          detail.textContent = `${s.done}/${s.total} vérifiés — ${s.removed} supprimé(s), ${s.added} ajouté(s), ${s.errors} erreurs`;
+          detail.textContent = t('sync.progress', {done:s.done, total:s.total, removed:s.removed, added:s.added, errors:s.errors});
         } else {
           clearInterval(syncPollTimer);
           syncPollTimer = null;
           bar.style.width = '100%';
-          detail.textContent = `Terminé — ${s.removed} supprimé(s), ${s.added} ajouté(s), ${s.errors} erreurs`;
+          detail.textContent = t('sync.done', {removed:s.removed, added:s.added, errors:s.errors});
           btn.disabled = false;
           setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 5000);
           loadDashboard();
@@ -418,7 +439,7 @@
   $('#btn-enrich').addEventListener('click', async () => {
     try {
       await api('/enrich', { method: 'POST' });
-      toast('Enrichissement lancé', 'success');
+      toast(t('toast.enrich_started'), 'success');
       startEnrichPoll();
     } catch (e) { toast(e.message, 'error'); }
   });
@@ -426,7 +447,7 @@
   $('#btn-gen-thumbs').addEventListener('click', async () => {
     try {
       await api('/thumbs', { method: 'POST' });
-      toast('Génération des miniatures lancée', 'success');
+      toast(t('toast.thumbs_started'), 'success');
       startThumbsPoll();
     } catch (e) { toast(e.message, 'error'); }
   });
@@ -447,12 +468,12 @@
         if (s.running) {
           const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
           bar.style.width = pct + '%';
-          detail.textContent = `${s.done}/${s.total} (${s.errors} erreurs)`;
+          detail.textContent = t('enrich.progress', {done:s.done, total:s.total, errors:s.errors});
         } else {
           clearInterval(enrichPollTimer);
           enrichPollTimer = null;
           bar.style.width = '100%';
-          detail.textContent = `Terminé — ${s.total} vidéos, ${s.errors} erreurs`;
+          detail.textContent = t('enrich.done', {total:s.total, errors:s.errors});
           btn.disabled = false;
           setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
           loadDashboard();
@@ -477,12 +498,12 @@
         if (s.running) {
           const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
           bar.style.width = pct + '%';
-          detail.textContent = `${s.done}/${s.total} (${s.errors} erreurs)`;
+          detail.textContent = t('thumbs.progress', {done:s.done, total:s.total, errors:s.errors});
         } else {
           clearInterval(thumbsPollTimer);
           thumbsPollTimer = null;
           bar.style.width = '100%';
-          detail.textContent = `Terminé — ${s.total} miniatures, ${s.errors} erreurs`;
+          detail.textContent = t('thumbs.done', {total:s.total, errors:s.errors});
           btn.disabled = false;
           setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
           loadDashboard();
@@ -501,10 +522,10 @@
 
   /* ── Clear DB ──────────────────────────────────────────── */
   $('#btn-clear-db').addEventListener('click', async () => {
-    if (!confirm('⚠️ Êtes-vous sûr de vouloir vider toute la base de données ?\nCette action est irréversible.')) return;
+    if (!confirm(t('confirm.clear_db'))) return;
     try {
       await api('/clear', { method: 'POST' });
-      toast('Base de données vidée', 'success');
+      toast(t('toast.db_cleared'), 'success');
       libSelected.clear();
       loadDashboard();
       loadFolders();
@@ -520,7 +541,7 @@
     try {
       const folders = await api('/folders');
       const sel = $('#lib-folder');
-      sel.innerHTML = '<option value="">Tous les dossiers</option>';
+      sel.innerHTML = `<option value="">${t('lib.all_folders')}</option>`;
       folders.forEach(f => {
         const o = document.createElement('option');
         o.value = f.folder;
@@ -549,13 +570,13 @@
       renderLibGrid(data.videos);
       renderPagination(data.pages, data.page);
       updateSelectionBar();
-    } catch (e) { toast(`Erreur bibliothèque: ${e.message}`, 'error'); }
+    } catch (e) { toast(t('error.library', {msg: e.message}), 'error'); }
   }
 
   function renderLibGrid(videos) {
     const grid = $('#lib-grid');
     if (!videos.length) {
-      grid.innerHTML = '<div class="mb-empty">Aucune vidéo trouvée</div>';
+      grid.innerHTML = `<div class="mb-empty">${t('lib.no_video')}</div>`;
       return;
     }
     grid.innerHTML = videos.map(v => {
@@ -630,8 +651,7 @@
     const count = libSelected.size;
     if (count > 0) {
       bar.classList.remove('hidden');
-      const extra = count > libLimit && libTotal > libLimit ? ` / ${libTotal} total` : '';
-      $('#lib-sel-count').textContent = `${count} sélectionné(s)${extra}`;
+      $('#lib-sel-count').textContent = count > libLimit && libTotal > libLimit ? t('lib.n_selected_total', {count, total: libTotal}) : t('lib.n_selected', {count});
     } else {
       bar.classList.add('hidden');
     }
@@ -683,7 +703,7 @@
       if (folder) params.set('folder', folder);
       if (codec) params.set('codec', codec);
       const data = await api(`/videos/ids?${params}`);
-      if (!data.ids || !data.ids.length) { toast('Aucune vidéo correspondante', 'info'); return; }
+      if (!data.ids || !data.ids.length) { toast(t('toast.no_matching'), 'info'); return; }
       data.ids.forEach(id => libSelected.add(id));
       // Update checkboxes on current page
       $$('.mb-card').forEach(c => {
@@ -694,7 +714,7 @@
         }
       });
       updateSelectionBar();
-      toast(`${data.ids.length} vidéo(s) sélectionnée(s)`, 'success');
+      toast(t('toast.n_selected', {n: data.ids.length}), 'success');
     } catch (e) { toast(e.message, 'error'); }
   });
   $('#lib-sel-none').addEventListener('click', () => {
@@ -722,11 +742,11 @@
   $('#lib-delete-sel').addEventListener('click', async () => {
     if (!libSelected.size) return;
     const n = libSelected.size;
-    if (!confirm(`⚠️ Supprimer ${n} vidéo(s) définitivement ?\nLes fichiers seront effacés du disque.`)) return;
+    if (!confirm(t('confirm.delete_videos', {n}))) return;
     try {
       const r = await api('/videos/delete', { method: 'POST', body: JSON.stringify({ ids: [...libSelected] }) });
-      toast(`${r.deleted} vidéo(s) supprimée(s)`, 'success');
-      if (r.fileErrors && r.fileErrors.length) toast(`${r.fileErrors.length} erreur(s) fichier`, 'warn');
+      toast(t('toast.n_deleted', {n: r.deleted}), 'success');
+      if (r.fileErrors && r.fileErrors.length) toast(t('toast.file_errors', {n: r.fileErrors.length}), 'warn');
       libSelected.clear();
       updateSelectionBar();
       loadLibrary();
@@ -743,7 +763,7 @@
     try {
       const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=5000')]);
       renderEncodeStatus(status, history.rows);
-    } catch (e) { toast(`Erreur encodage: ${e.message}`, 'error'); }
+    } catch (e) { toast(t('error.encoding', {msg: e.message}), 'error'); }
   }
 
   function renderEncodeStatus(status, jobs) {
@@ -754,12 +774,12 @@
 
     header.innerHTML = `
       <div class="enc-queue-stats">
-        <span class="enc-qs"><span class="dot dot-encoding"></span> En cours : <b>${counts.encoding}</b></span>
-        <span class="enc-qs"><span class="dot dot-pending"></span> En attente : <b>${counts.pending}</b></span>
-        <span class="enc-qs"><span class="dot dot-done"></span> Terminés : <b>${counts.done}</b></span>
-        <span class="enc-qs"><span class="dot dot-error"></span> Erreurs : <b>${counts.error}</b></span>
+        <span class="enc-qs"><span class="dot dot-encoding"></span> ${t('queue.encoding')} : <b>${counts.encoding}</b></span>
+        <span class="enc-qs"><span class="dot dot-pending"></span> ${t('queue.pending')} : <b>${counts.pending}</b></span>
+        <span class="enc-qs"><span class="dot dot-done"></span> ${t('queue.done')} : <b>${counts.done}</b></span>
+        <span class="enc-qs"><span class="dot dot-error"></span> ${t('queue.errors')} : <b>${counts.error}</b></span>
       </div>
-      <div style="font-size:12px;color:var(--a-text-muted)">Workers actifs : ${status.activeJobs}/${status.workerCount}</div>
+      <div style="font-size:12px;color:var(--a-text-muted)">${t('queue.active_workers', {active: status.activeJobs, total: status.workerCount})}</div>
     `;
 
     // Update badge on panel header
@@ -777,7 +797,7 @@
     // Jobs list
     const list = $('#encode-queue');
     if (!jobs || !jobs.length) {
-      list.innerHTML = '<div class="mb-empty">Aucun job d\'encodage</div>';
+      list.innerHTML = `<div class="mb-empty">${t('queue.no_jobs')}</div>`;
       return;
     }
     list.innerHTML = jobs.map(j => {
@@ -831,11 +851,11 @@
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
       const res = await fetch(`/api/encode/job/${jobId}/log`, { headers });
-      if (!res.ok) { toast('Log non disponible', 'warn'); return; }
+      if (!res.ok) { toast(t('toast.log_unavailable'), 'warn'); return; }
       const text = await res.text();
       const modal = document.getElementById('log-modal') || createLogModal();
-      modal.querySelector('.log-modal-content').textContent = text || '(vide)';
-      modal.querySelector('.log-modal-title').textContent = `Log — Job #${jobId}`;
+      modal.querySelector('.log-modal-content').textContent = text || t('log.empty');
+      modal.querySelector('.log-modal-title').textContent = t('log.modal_title', {id: jobId});
       modal.style.display = '';
     } catch (e) { toast(`Erreur: ${e.message}`, 'error'); }
   }
@@ -863,15 +883,15 @@
     loadEncodeQueue();
     if (d.status === 'done') {
       if (d.skipped) {
-        toast(`Job #${d.id} : ${d.reason || 'encodage ignoré'}`, 'info');
+        toast(t('toast.job_skipped', {id: d.id, reason: d.reason || ''}), 'info');
       } else {
-        toast(`Encodage terminé : job #${d.id}`, 'success');
+        toast(t('toast.encoding_done', {id: d.id}), 'success');
       }
       loadDashboard();
       // Refresh library to show updated codec/size/metadata
       loadLibrary();
     } else if (d.status === 'error') {
-      toast(`Erreur encodage : job #${d.id} – ${d.error || ''}`, 'error');
+      toast(t('toast.encoding_error', {id: d.id, error: d.error || ''}), 'error');
     }
   }
 
@@ -891,20 +911,20 @@
     if (!count || count < 1 || count > 8) return;
     try {
       await api('/encode/workers', { method: 'POST', body: JSON.stringify({ count }) });
-      toast(`Workers réglés à ${count}`, 'success');
+      toast(t('toast.workers_set', {count}), 'success');
     } catch (e) { toast(e.message, 'error'); }
   });
   $('#btn-cancel-all').addEventListener('click', async () => {
     try {
       const r = await api('/encode/cancel-all', { method: 'POST' });
-      toast(`${r.cancelled} jobs annulés`, 'info');
+      toast(t('toast.jobs_cancelled', {n: r.cancelled}), 'info');
       loadEncodeQueue();
     } catch (e) { toast(e.message, 'error'); }
   });
   $('#btn-clear-queue').addEventListener('click', async () => {
     try {
       const r = await api('/encode/clear-finished', { method: 'POST' });
-      toast(`${r.cleared} job(s) supprimé(s) de la file`, 'success');
+      toast(t('toast.jobs_cleared', {n: r.cleared}), 'success');
       loadEncodeQueue();
     } catch (e) { toast(e.message, 'error'); }
   });
@@ -913,7 +933,7 @@
   function openVideoPlayer(videoId, filename) {
     const player = $('#video-player');
     const modal = $('#player-modal');
-    $('#player-title').textContent = filename || 'Lecture vidéo';
+    $('#player-title').textContent = filename || t('player.title');
     player.src = `/api/stream/${videoId}?token=${encodeURIComponent(token)}`;
     modal.style.display = '';
     player.play().catch(() => {});
@@ -937,7 +957,7 @@
 
   function openEncodeModal(videoIds) {
     encodeVideoIds = videoIds;
-    $('#encode-modal-info').textContent = `${videoIds.length} vidéo(s) sélectionnée(s)`;
+    $('#encode-modal-info').textContent = t('modal.n_selected', {n: videoIds.length});
     loadPresetsForModal();
     $('#encode-modal').style.display = '';
   }
@@ -973,7 +993,7 @@
     const container = $('#encode-container')?.value || 'auto';
     const downscale = $('#encode-downscale')?.value || '';
     const tonemap = $('#encode-tonemap')?.checked || false;
-    if (!presetId) return toast('Sélectionnez un preset', 'warn');
+    if (!presetId) return toast(t('toast.select_preset'), 'warn');
     try {
       const r = await api('/encode/enqueue', {
         method: 'POST',
@@ -981,8 +1001,7 @@
       });
       const nJobs = (r.jobs || []).length;
       const nSkipped = (r.skipped || []).length;
-      let msg = `${nJobs} job(s) ajouté(s)`;
-      if (nSkipped > 0) msg += `, ${nSkipped} ignoré(s) (déjà dans le codec cible)`;
+      const msg = nSkipped > 0 ? t('toast.jobs_added_skipped', {nJobs, nSkipped}) : t('toast.jobs_added', {nJobs});
       toast(msg, nJobs > 0 ? 'success' : 'info');
       $('#encode-modal').style.display = 'none';
       forceEncodeFlag = false;
@@ -1016,9 +1035,9 @@
       // Info chips
       const info = $('#hw-info');
       let chips = '';
-      if (caps.nvidia) chips += `<span class="hw-chip hw-chip-gpu">🟢 NVIDIA NVENC</span>`;
-      if (caps.vaapi) chips += `<span class="hw-chip hw-chip-vaapi">🔵 VA-API</span>`;
-      if (!caps.nvidia && !caps.vaapi) chips += `<span class="hw-chip hw-chip-cpu">⚪ CPU uniquement (libx265)</span>`;
+      if (caps.nvidia) chips += `<span class="hw-chip hw-chip-gpu">${t('hw.nvidia')}</span>`;
+      if (caps.vaapi) chips += `<span class="hw-chip hw-chip-vaapi">${t('hw.vaapi')}</span>`;
+      if (!caps.nvidia && !caps.vaapi) chips += `<span class="hw-chip hw-chip-cpu">${t('hw.cpu_only')}</span>`;
       info.innerHTML = chips;
 
       // Presets list
@@ -1031,7 +1050,7 @@
             <div class="enc-job-meta">${escHtml(p.id)} — ${p.encoder || '?'}</div>
           </div>
         </div>`).join('');
-    } catch (e) { toast(`Erreur matériel: ${e.message}`, 'error'); }
+    } catch (e) { toast(t('error.hardware', {msg: e.message}), 'error'); }
   }
 
   $('#btn-hw-refresh').addEventListener('click', () => loadHardware(true));
@@ -1127,7 +1146,7 @@
           end: parseInt($('#schedule-end').value, 10),
         }),
       });
-      toast('Planification enregistrée', 'success');
+      toast(t('toast.schedule_saved'), 'success');
     } catch (e) { toast(e.message, 'error'); }
   });
 
@@ -1140,7 +1159,7 @@
           url: $('#webhook-url').value,
         }),
       });
-      toast('Notifications enregistrées', 'success');
+      toast(t('toast.webhook_saved'), 'success');
     } catch (e) { toast(e.message, 'error'); }
   });
 
@@ -1150,7 +1169,7 @@
       const presetsList = await api('/custom-presets');
       const list = $('#custom-presets-list');
       if (!presetsList.length) {
-        list.innerHTML = '<p style="color:var(--a-text-muted);font-size:12px">Aucun preset personnalisé</p>';
+        list.innerHTML = `<p style="color:var(--a-text-muted);font-size:12px">${t('settings.no_presets')}</p>`;
         return;
       }
       list.innerHTML = presetsList.map(p => `
@@ -1170,14 +1189,14 @@
   window.deleteCustomPreset = async function(id) {
     try {
       await api(`/custom-presets/${id}`, { method: 'DELETE' });
-      toast('Preset supprimé', 'success');
+      toast(t('toast.preset_deleted'), 'success');
       loadCustomPresets();
     } catch (e) { toast(e.message, 'error'); }
   };
 
   $('#btn-save-custom-preset').addEventListener('click', async () => {
     const name = $('#cp-name').value.trim();
-    if (!name) return toast('Nom requis', 'warn');
+    if (!name) return toast(t('toast.name_required'), 'warn');
     try {
       await api('/custom-presets', {
         method: 'POST',
@@ -1190,7 +1209,7 @@
           tonemap: $('#cp-tonemap').checked,
         }),
       });
-      toast('Preset créé', 'success');
+      toast(t('toast.preset_created'), 'success');
       $('#cp-name').value = '';
       loadCustomPresets();
     } catch (e) { toast(e.message, 'error'); }
