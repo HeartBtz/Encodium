@@ -11,7 +11,7 @@
  */
 'use strict';
 
-require('dotenv').config();
+require('dotenv').config({ override: true });
 
 const db      = require('./db');
 const scanner = require('./scanner');

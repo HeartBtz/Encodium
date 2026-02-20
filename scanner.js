@@ -16,7 +16,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb, pool } = require('./db');
-require('dotenv').config();
+require('dotenv').config({ override: true });
 
 const logger = require('./services/logger');
 
