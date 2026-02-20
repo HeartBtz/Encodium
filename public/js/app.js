@@ -266,7 +266,6 @@
       const labels = history.map(h => h.day);
       const savedData = history.map(h => ((h.saved || 0) / 1e9).toFixed(2)); // GB
       const countData = history.map(h => h.count);
-      const durationData = history.map(h => Math.round((h.avg_duration || 0) / 60)); // minutes
 
       const chartOpts = {
         responsive: true,
@@ -291,13 +290,18 @@
         options: { ...chartOpts, scales: { ...chartOpts.scales, y1: { position: 'right', ticks: { color: '#888' }, grid: { drawOnChartArea: false } } } },
       });
 
-      // Speed chart
+      // Speed chart — before vs after size
+      const beforeData = history.map(h => ((h.total_before || 0) / 1e9).toFixed(2));
+      const afterData = history.map(h => ((h.total_after || 0) / 1e9).toFixed(2));
       if (speedChart) speedChart.destroy();
       speedChart = new Chart($('#chart-speed'), {
         type: 'line',
         data: {
           labels,
-          datasets: [{ label: 'Durée moyenne (min)', data: durationData, borderColor: 'rgba(34,197,94,0.8)', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3 }],
+          datasets: [
+            { label: 'Avant (GB)', data: beforeData, borderColor: 'rgba(239,68,68,0.8)', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 },
+            { label: 'Après (GB)', data: afterData, borderColor: 'rgba(34,197,94,0.8)', backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3 },
+          ],
         },
         options: chartOpts,
       });
@@ -850,6 +854,13 @@
     try {
       const r = await api('/encode/cancel-all', { method: 'POST' });
       toast(`${r.cancelled} jobs annulés`, 'info');
+      loadEncodeQueue();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+  $('#btn-clear-queue').addEventListener('click', async () => {
+    try {
+      const r = await api('/encode/clear-finished', { method: 'POST' });
+      toast(`${r.cleared} job(s) supprimé(s) de la file`, 'success');
       loadEncodeQueue();
     } catch (e) { toast(e.message, 'error'); }
   });

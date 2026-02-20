@@ -134,6 +134,35 @@ async function initSchema() {
     // v1.1 — job priority
     await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN priority INT DEFAULT 0 AFTER replace_original");
 
+    // ── Encoding Savings Ledger (persistent, survives queue clears) ──
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS encoding_savings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        video_id INT,
+        filename VARCHAR(500),
+        codec_before VARCHAR(50),
+        codec_after VARCHAR(50),
+        size_before BIGINT DEFAULT 0,
+        size_after BIGINT DEFAULT 0,
+        saved BIGINT DEFAULT 0,
+        preset_id VARCHAR(100),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Backfill savings from existing encode_jobs (one-time migration)
+    const [[{ savingsCount }]] = await conn.query('SELECT COUNT(*) as savingsCount FROM encoding_savings');
+    if (savingsCount === 0) {
+      await conn.query(`
+        INSERT INTO encoding_savings (video_id, filename, codec_after, size_before, size_after, saved, preset_id, created_at)
+        SELECT ej.video_id, v.filename, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(ej.preset_json, '$.codec')), ''), ej.file_size_before, ej.output_size,
+               ej.file_size_before - ej.output_size, ej.preset_id, ej.ended_at
+        FROM encode_jobs ej LEFT JOIN videos v ON ej.video_id = v.id
+        WHERE ej.status = 'done' AND ej.file_size_before > 0 AND ej.output_size > 0
+      `);
+    }
+
     // ── Custom Presets ──
     await conn.query(`
       CREATE TABLE IF NOT EXISTS custom_presets (

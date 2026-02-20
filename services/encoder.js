@@ -992,6 +992,15 @@ async function processJob(job) {
     );
     broadcast('job_update', { id: job.id, status: 'done', output_path: finalPath, output_size: newSize, video_id: job.video_id });
 
+    // ── Persist savings to permanent ledger ──
+    const savedBytes = (video.size || 0) - newSize;
+    try {
+      await pool.query(
+        'INSERT INTO encoding_savings (video_id, filename, codec_before, codec_after, size_before, size_after, saved, preset_id) VALUES (?,?,?,?,?,?,?,?)',
+        [job.video_id, video.filename, inputCodec, preset.codec, video.size || 0, newSize, savedBytes, job.preset_id]
+      );
+    } catch (e) { logger.warn('encoder', `Could not persist savings: ${e.message}`); }
+
     const savings = video.size > 0 ? ((1 - newSize / video.size) * 100).toFixed(1) : '?';
     jobLog.info(`=== Job #${job.id} DONE — ${(newSize / 1e6).toFixed(1)} MB (${savings}% savings) ===`);
     logger.success('encoder', `Job #${job.id} done: ${video.filename} → ${(newSize / 1e6).toFixed(1)} MB (${savings}% saved)`, {
@@ -1333,6 +1342,17 @@ async function deleteJob(jobId) {
   return true;
 }
 
+async function clearFinished() {
+  const pool = db.getPool();
+  // Delete finished/errored/cancelled jobs (not pending or encoding)
+  const [result] = await pool.query("DELETE FROM encode_jobs WHERE status IN ('done','error','failed','cancelled')");
+  if (result.affectedRows > 0) {
+    logger.info('encoder', `Cleared ${result.affectedRows} finished job(s) from queue`);
+    broadcast('job_update', { cleared: true });
+  }
+  return result.affectedRows;
+}
+
 function setWorkerCount(n) {
   workerCount = Math.max(1, Math.min(8, n));
   logger.info('encoder', `Worker count set to ${workerCount}`);
@@ -1387,7 +1407,7 @@ function stop() {
 }
 
 module.exports = {
-  enqueue, enqueueBatch, cancelJob, cancelPending, retryJob, deleteJob,
+  enqueue, enqueueBatch, cancelJob, cancelPending, retryJob, deleteJob, clearFinished,
   setWorkerCount, getStatus, getHistory, getJobLog,
   addSSEClient, broadcast,
   start, stop, processQueue,

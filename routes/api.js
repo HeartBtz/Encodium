@@ -246,9 +246,10 @@ router.get('/stats', requireAuth, async (req, res) => {
     );
     const [[eStats]] = await pool.query(
       `SELECT COUNT(*) as encoded_count,
-              COALESCE(SUM(file_size_before), 0) as total_before,
-              COALESCE(SUM(output_size), 0) as total_after
-       FROM encode_jobs WHERE status = 'done' AND file_size_before > 0 AND output_size > 0`
+              COALESCE(SUM(size_before), 0) as total_before,
+              COALESCE(SUM(size_after), 0) as total_after,
+              COALESCE(SUM(saved), 0) as total_saved
+       FROM encoding_savings`
     );
     res.json({
       videos: vStats,
@@ -257,7 +258,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         count: Number(eStats.encoded_count),
         totalBefore: Number(eStats.total_before),
         totalAfter: Number(eStats.total_after),
-        saved: Number(eStats.total_before) - Number(eStats.total_after),
+        saved: Number(eStats.total_saved),
       },
       paths: {
         media: scanner.MEDIA_DIR,
@@ -410,6 +411,13 @@ router.post('/encode/cancel-all', requireAuth, async (req, res) => {
   res.json({ cancelled: n });
 });
 
+router.post('/encode/clear-finished', requireAuth, async (req, res) => {
+  try {
+    const n = await encoder.clearFinished();
+    res.json({ cleared: n });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/encode/retry/:id', requireAuth, async (req, res) => {
   try {
     await encoder.retryJob(parseInt(req.params.id, 10));
@@ -502,15 +510,14 @@ router.get('/stats/history', requireAuth, async (req, res) => {
     // Daily encoding stats for the last 30 days
     const [rows] = await pool.query(`
       SELECT
-        DATE(ended_at) as day,
+        DATE(created_at) as day,
         COUNT(*) as count,
-        SUM(file_size_before) as total_before,
-        SUM(output_size) as total_after,
-        SUM(file_size_before - output_size) as saved,
-        AVG(TIMESTAMPDIFF(SECOND, started_at, ended_at)) as avg_duration
-      FROM encode_jobs
-      WHERE status='done' AND ended_at IS NOT NULL AND ended_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
-      GROUP BY DATE(ended_at)
+        SUM(size_before) as total_before,
+        SUM(size_after) as total_after,
+        SUM(saved) as saved
+      FROM encoding_savings
+      WHERE created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+      GROUP BY DATE(created_at)
       ORDER BY day ASC
     `);
     res.json(rows);
