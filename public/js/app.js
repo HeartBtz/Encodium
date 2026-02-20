@@ -187,6 +187,34 @@
       const jobTxt = jb ? `${jb.total || 0} (${jb.encoding || 0} en cours)` : '0';
       $('#stat-jobs').textContent = jobTxt;
 
+      // Encoding savings
+      const enc = stats.encoding;
+      if (enc && enc.count > 0) {
+        const saved = enc.saved;
+        const pct = enc.totalBefore > 0 ? Math.round((saved / enc.totalBefore) * 100) : 0;
+        $('#stat-saved').textContent = (saved > 0 ? '-' : '') + fmtSize(Math.abs(saved));
+        const card = $('#savings-card');
+        card.style.display = '';
+        const ratio = enc.totalBefore > 0 ? (enc.totalAfter / enc.totalBefore * 100).toFixed(1) : '—';
+        $('#savings-detail').innerHTML = `
+          <div class="savings-grid">
+            <div class="savings-item"><span class="savings-label">Fichiers encodés</span><span class="savings-value">${enc.count}</span></div>
+            <div class="savings-item"><span class="savings-label">Taille avant</span><span class="savings-value">${fmtSize(enc.totalBefore)}</span></div>
+            <div class="savings-item"><span class="savings-label">Taille après</span><span class="savings-value">${fmtSize(enc.totalAfter)}</span></div>
+            <div class="savings-item"><span class="savings-label">Espace ${saved >= 0 ? 'gagné' : 'perdu'}</span><span class="savings-value ${saved >= 0 ? 'savings-positive' : 'savings-negative'}">${saved >= 0 ? '-' : '+'}${fmtSize(Math.abs(saved))} (${pct}%)</span></div>
+            <div class="savings-item"><span class="savings-label">Ratio moyen</span><span class="savings-value">${ratio}%</span></div>
+          </div>
+          <div class="savings-bar-wrap">
+            <div class="savings-bar-bg">
+              <div class="savings-bar-fill" style="width:${Math.min(100, Number(ratio))}%"></div>
+            </div>
+            <div class="savings-bar-labels"><span>Après : ${fmtSize(enc.totalAfter)}</span><span>Avant : ${fmtSize(enc.totalBefore)}</span></div>
+          </div>`;
+      } else {
+        $('#stat-saved').textContent = '—';
+        $('#savings-card').style.display = 'none';
+      }
+
       // Paths
       if (stats.paths) {
         $('#path-media').textContent = stats.paths.media || '—';

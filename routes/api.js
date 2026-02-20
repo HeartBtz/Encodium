@@ -241,9 +241,21 @@ router.get('/stats', requireAuth, async (req, res) => {
               SUM(status='cancelled') as cancelled
        FROM encode_jobs`
     );
+    const [[eStats]] = await pool.query(
+      `SELECT COUNT(*) as encoded_count,
+              COALESCE(SUM(file_size_before), 0) as total_before,
+              COALESCE(SUM(output_size), 0) as total_after
+       FROM encode_jobs WHERE status = 'done' AND file_size_before > 0 AND output_size > 0`
+    );
     res.json({
       videos: vStats,
       jobs: jStats,
+      encoding: {
+        count: Number(eStats.encoded_count),
+        totalBefore: Number(eStats.total_before),
+        totalAfter: Number(eStats.total_after),
+        saved: Number(eStats.total_before) - Number(eStats.total_after),
+      },
       paths: {
         media: scanner.MEDIA_DIR,
         thumbs: scanner.THUMB_DIR,
