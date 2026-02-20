@@ -308,7 +308,7 @@ function buildArgsV2(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
       '-i', inFile, '-progress', 'pipe:1', ...tail];
   }
 
-  return { swArgs, hwArgs, container, pixFmt, isHdr };
+  return { swArgs, hwArgs, container, pixFmt, isHdr, actualOutFile: outFile };
 }
 
 /* ─── GPU selection helpers ──────────────────────────────────── */
@@ -387,15 +387,24 @@ async function createJobLogger(jobId) {
 async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
   const errors = [];
 
-  // Check file exists and is non-empty
-  try {
-    const st = await fsp.stat(tmpFile);
-    if (st.size === 0) { errors.push('Output file is empty (0 bytes)'); return errors; }
-    jobLog.info(`Output file size: ${(st.size / 1e6).toFixed(1)} MB`);
-  } catch {
-    errors.push('Output file does not exist');
-    return errors;
+  // Check file exists and is non-empty (with retry for filesystem lag / NFS / Docker volumes)
+  let st = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      st = await fsp.stat(tmpFile);
+      break;
+    } catch (statErr) {
+      if (attempt < 3) {
+        jobLog.warn(`Output file not found (attempt ${attempt}/3, ${statErr.code || statErr.message}), retrying in 2s…`);
+        await new Promise(r => setTimeout(r, 2000));
+      } else {
+        errors.push(`Output file does not exist (${statErr.code || statErr.message}): ${tmpFile}`);
+        return errors;
+      }
+    }
   }
+  if (st.size === 0) { errors.push('Output file is empty (0 bytes)'); return errors; }
+  jobLog.info(`Output file size: ${(st.size / 1e6).toFixed(1)} MB`);
 
   // Check output video codec
   const outCodec = await ffprobeValue(tmpFile, 'v:0', 'stream=codec_name');
@@ -613,7 +622,14 @@ async function processJob(job) {
       inputCodec, colorMeta, bitDepth, isHdr,
       caps: encCaps, badSubIndices, inputDuration,
     };
-    const { swArgs, hwArgs } = buildArgsV2(preset, inFile, tmpFile, probeInfo, encodeOpts);
+    const { swArgs, hwArgs, actualOutFile } = buildArgsV2(preset, inFile, tmpFile, probeInfo, encodeOpts);
+
+    // buildArgsV2 may adjust the output path (e.g. extension change) —
+    // always use the path that ffmpeg will actually write to.
+    if (actualOutFile !== tmpFile) {
+      jobLog.warn(`Output path adjusted by buildArgsV2: ${tmpFile} → ${actualOutFile}`);
+      tmpFile = actualOutFile;
+    }
 
     jobLog.info(`--- ffmpeg commands ---`);
     jobLog.info(`SW: ffmpeg ${swArgs.join(' ')}`);
@@ -694,6 +710,7 @@ async function processJob(job) {
         const targetPath = path.join(path.dirname(inFile), `${baseName}${ext}`);
         // Move new file first, THEN delete original (ensures no data loss on failure)
         await moveFile(tmpFile, targetPath);
+        tmpFile = null; // moved successfully — prevent finally from deleting it
         finalPath = targetPath;
         // Only delete the original after the new file is safely in place
         if (targetPath !== inFile) {
@@ -707,10 +724,12 @@ async function processJob(job) {
       } catch (e) {
         jobLog.error(`Replace-original failed: ${e.message}`);
         finalPath = tmpFile;
+        tmpFile = null; // keep the file at tmpFile as final output — don't let finally delete it
       }
     } else {
       try {
         await moveFile(tmpFile, outFile);
+        tmpFile = null; // moved successfully — prevent finally from deleting it
         // Delete the original file since encode succeeded — avoids duplicates on next sync
         if (inFile !== outFile) {
           try { await fsp.unlink(inFile); jobLog.info(`Deleted original → ${inFile}`); } catch (unlinkErr) {
@@ -723,6 +742,7 @@ async function processJob(job) {
       } catch (e) {
         jobLog.error(`Move failed: ${e.message}`);
         finalPath = tmpFile;
+        tmpFile = null; // keep the file at tmpFile as final output — don't let finally delete it
       }
     }
 
