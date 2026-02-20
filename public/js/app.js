@@ -507,6 +507,22 @@
     if (!libSelected.size) return;
     openEncodeModal([...libSelected]);
   });
+  // Delete selected
+  $('#lib-delete-sel').addEventListener('click', async () => {
+    if (!libSelected.size) return;
+    const n = libSelected.size;
+    if (!confirm(`⚠️ Supprimer ${n} vidéo(s) définitivement ?\nLes fichiers seront effacés du disque.`)) return;
+    try {
+      const r = await api('/videos', { method: 'DELETE', body: JSON.stringify({ ids: [...libSelected] }) });
+      toast(`${r.deleted} vidéo(s) supprimée(s)`, 'success');
+      if (r.fileErrors && r.fileErrors.length) toast(`${r.fileErrors.length} erreur(s) fichier`, 'warn');
+      libSelected.clear();
+      updateSelectionBar();
+      loadLibrary();
+      loadDashboard();
+      loadFolders();
+    } catch (e) { toast(e.message, 'error'); }
+  });
 
   /* ═══════════════════════════════════════════════════════
      ENCODE

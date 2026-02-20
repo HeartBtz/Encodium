@@ -125,7 +125,7 @@ router.get('/videos', requireAuth, async (req, res) => {
     }
     if (codec) {
       if (codec === 'unknown') {
-        where.push('(v.codec IS NULL OR v.codec = "")');
+        where.push("(v.codec IS NULL OR v.codec = '')");
       } else {
         where.push('v.codec = ?');
         params.push(codec);
@@ -160,6 +160,33 @@ router.get('/videos/:id', requireAuth, async (req, res) => {
     const [[video]] = await pool.query('SELECT * FROM videos WHERE id=?', [req.params.id]);
     if (!video) return res.status(404).json({ error: 'Video not found' });
     res.json(video);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/videos', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+    const pool = db.getPool();
+    const placeholders = ids.map(() => '?').join(',');
+    const [rows] = await pool.query(`SELECT id, file_path FROM videos WHERE id IN (${placeholders})`, ids);
+    let deleted = 0, fileErrors = [];
+    for (const v of rows) {
+      // Delete physical file
+      if (v.file_path) {
+        try { fs.unlinkSync(v.file_path); } catch (e) {
+          if (e.code !== 'ENOENT') fileErrors.push({ id: v.id, error: e.message });
+        }
+      }
+      // Delete thumbnail
+      const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${v.id}.jpg`);
+      try { fs.unlinkSync(thumbPath); } catch {}
+      // Delete from DB
+      await pool.query('DELETE FROM videos WHERE id = ?', [v.id]);
+      deleted++;
+    }
+    logger.info('api', `Deleted ${deleted} video(s) (requested: ${ids.length})`);
+    res.json({ deleted, fileErrors });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
