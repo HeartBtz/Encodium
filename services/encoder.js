@@ -639,7 +639,13 @@ async function processJob(job) {
     } else {
       try {
         await moveFile(tmpFile, outFile);
-        // Even without replace-original, update video metadata to reflect the new encoded file
+        // Delete the original file since encode succeeded — avoids duplicates on next sync
+        if (inFile !== outFile) {
+          try { await fsp.unlink(inFile); jobLog.info(`Deleted original → ${inFile}`); } catch (unlinkErr) {
+            if (unlinkErr.code !== 'ENOENT') jobLog.warn(`Could not remove original (${unlinkErr.message})`);
+          }
+        }
+        // Update video metadata to reflect the new encoded file
         await refreshVideoMeta(job.video_id, outFile, jobLog);
         jobLog.info(`Output → ${outFile}`);
       } catch (e) {

@@ -179,13 +179,14 @@ router.get('/videos/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/videos', requireAuth, async (req, res) => {
+router.post('/videos/delete', requireAuth, async (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
     const pool = db.getPool();
     const placeholders = ids.map(() => '?').join(',');
     const [rows] = await pool.query(`SELECT id, file_path FROM videos WHERE id IN (${placeholders})`, ids);
+    logger.info('api', `Delete request: ${ids.length} id(s) sent, ${rows.length} found in DB`);
     let deleted = 0, fileErrors = [];
     for (const v of rows) {
       // Delete physical file
@@ -199,6 +200,8 @@ router.delete('/videos', requireAuth, async (req, res) => {
       try { fs.unlinkSync(thumbPath); } catch {}
       // Delete from DB
       await pool.query('DELETE FROM videos WHERE id = ?', [v.id]);
+      // Also delete any encode jobs referencing this video
+      await pool.query('DELETE FROM encode_jobs WHERE video_id = ?', [v.id]);
       deleted++;
     }
     logger.info('api', `Deleted ${deleted} video(s) (requested: ${ids.length})`);

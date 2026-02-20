@@ -588,7 +588,7 @@
     const n = libSelected.size;
     if (!confirm(`⚠️ Supprimer ${n} vidéo(s) définitivement ?\nLes fichiers seront effacés du disque.`)) return;
     try {
-      const r = await api('/videos', { method: 'DELETE', body: JSON.stringify({ ids: [...libSelected] }) });
+      const r = await api('/videos/delete', { method: 'POST', body: JSON.stringify({ ids: [...libSelected] }) });
       toast(`${r.deleted} vidéo(s) supprimée(s)`, 'success');
       if (r.fileErrors && r.fileErrors.length) toast(`${r.fileErrors.length} erreur(s) fichier`, 'warn');
       libSelected.clear();
