@@ -266,6 +266,15 @@ install_ffmpeg() {
     fi
     ok "ffmpeg installed"
   fi
+
+  # GPU hint
+  if command -v nvidia-smi &>/dev/null; then
+    ok "NVIDIA GPU detected: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+  elif [[ -d /dev/dri ]]; then
+    ok "VA-API/QSV device found (/dev/dri)"
+  else
+    warn "No GPU detected — encoding will use CPU (libx265/libsvtav1)"
+  fi
 }
 
 # ─── Directories ───────────────────────────────────────────
@@ -402,6 +411,7 @@ PORT=$APP_PORT
 # Directories
 MEDIA_DIR=$MEDIA_DIR
 ENCODE_DIR=$ENCODE_DIR
+THUMB_DIR=$SCRIPT_DIR/data/thumbs
 MAX_WORKERS=2
 EOF
 
@@ -580,7 +590,7 @@ SyslogIdentifier=$APP_NAME
 # Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=$SCRIPT_DIR/data
+ReadWritePaths=$SCRIPT_DIR/data ${MEDIA_DIR:-}
 PrivateTmp=true
 
 # Allow GPU access for hardware encoding
@@ -667,6 +677,10 @@ main() {
     echo "    journalctl -u $APP_NAME -f"
     echo ""
   fi
+  echo -e "  ${CYAN}Docker alternative:${NC}"
+  echo "    docker compose up -d"
+  echo "    docker compose --profile gpu up -d   # NVIDIA GPU"
+  echo ""
   echo -e "  ${YELLOW}⚠  Change admin password after first login!${NC}"
   echo ""
 }
