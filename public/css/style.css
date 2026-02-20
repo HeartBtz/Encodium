@@ -407,6 +407,23 @@ body {
 .enc-job-pct { font-size: 11px; color: var(--a-text-muted); text-align: right; }
 .enc-job-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
+/* ── Encode panel badge ─────────────────────────────────── */
+.enc-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 10px;
+  background: var(--a-accent);
+  color: #fff; font-size: 11px; font-weight: 700;
+  line-height: 1;
+}
+
+#encode-panel .card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0; flex-wrap: wrap; gap: 8px;
+}
+#encode-panel-body { padding-top: 12px; }
+#encode-panel .enc-jobs-list { max-height: 400px; overflow-y: auto; }
+
 /* ── Modal ──────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0; z-index: 200;

@@ -57,10 +57,6 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M10 8l6 4-6 4V8z" fill="currentColor"/></svg>
           Bibliothèque
         </button>
-        <button class="sidenav-item" data-tab="encode">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-          Encodage
-        </button>
         <button class="sidenav-item" data-tab="hardware">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/></svg>
           Matériel
@@ -191,19 +187,25 @@
         </div>
         <div id="lib-grid" class="mb-grid"></div>
         <div id="lib-pagination" class="pagination"></div>
-      </section>
 
-      <!-- ENCODE -->
-      <section id="tab-encode" class="admin-tab">
-        <div class="tab-title-row">
-          <h2>File d'encodage</h2>
-          <div class="tab-title-actions">
-            <div class="enc-workers-label">Workers : <input type="number" id="worker-count" min="1" max="8" value="2" class="input input-xs"> <button id="btn-set-workers" class="btn btn-sm">OK</button></div>
-            <button id="btn-cancel-all" class="btn btn-sm btn-danger">⏹ Tout annuler</button>
+        <!-- ENCODE QUEUE (inline below library) -->
+        <div id="encode-panel" class="admin-card" style="margin-top:24px">
+          <div class="card-header" style="cursor:pointer" id="encode-panel-toggle">
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="card-icon ci-red"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></div>
+              <div><h3>File d'encodage</h3></div>
+              <span id="encode-badge" class="enc-badge" style="display:none"></span>
+            </div>
+            <div class="tab-title-actions">
+              <div class="enc-workers-label">Workers : <input type="number" id="worker-count" min="1" max="8" value="2" class="input input-xs" onclick="event.stopPropagation()"> <button id="btn-set-workers" class="btn btn-sm" onclick="event.stopPropagation()">OK</button></div>
+              <button id="btn-cancel-all" class="btn btn-sm btn-danger" onclick="event.stopPropagation()">⏹ Tout annuler</button>
+            </div>
+          </div>
+          <div id="encode-panel-body">
+            <div id="encode-status" class="enc-queue-header"></div>
+            <div id="encode-queue" class="enc-jobs-list"></div>
           </div>
         </div>
-        <div id="encode-status" class="enc-queue-header"></div>
-        <div id="encode-queue" class="enc-jobs-list"></div>
       </section>
 
       <!-- HARDWARE -->

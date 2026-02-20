@@ -281,6 +281,15 @@ router.post('/encode/workers', requireAuth, (req, res) => {
   res.json({ workers: n });
 });
 
+/* Job log endpoint — returns detailed per-job ffmpeg log */
+router.get('/encode/job/:id/log', requireAuth, async (req, res) => {
+  try {
+    const log = await encoder.getJobLog(parseInt(req.params.id, 10));
+    if (log === null) return res.status(404).json({ error: 'Log not found' });
+    res.type('text/plain').send(log);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* SSE stream for real-time updates (token via query param for EventSource) */
 router.get('/events', (req, res) => {
   const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');

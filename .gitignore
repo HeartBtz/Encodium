@@ -1,5 +1,38 @@
+# Dependencies
 node_modules/
+
+# Environment
 .env
+
+# Logs
 *.log
+data/logs/
+
+# Generated data
 data/thumbs/*
+data/encoded/*
 !data/thumbs/.gitkeep
+!data/encoded/.gitkeep
+!data/logs/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Backups
+*.bak
+*.orig
+
+# PM2 / systemd artifacts
+ecosystem.config.js
+.tmp-admin-setup.js
+
+# Temp files
+*.tmp.*

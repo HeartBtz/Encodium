@@ -57,8 +57,8 @@ async function boot() {
     }
   }
 
-  // Start encode queue processor
-  encoder.start();
+  // Start encode queue processor (recovers stalled jobs from DB)
+  await encoder.start();
 
   app.listen(PORT, () => {
     console.log(`\n  ╔══════════════════════════════════════╗`);

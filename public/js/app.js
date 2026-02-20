@@ -166,8 +166,7 @@
   function switchTab(tab) {
     $$('.sidenav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     $$('.admin-tab').forEach(s => s.classList.toggle('active', s.id === `tab-${tab}`));
-    if (tab === 'library') loadLibrary();
-    if (tab === 'encode') loadEncodeQueue();
+    if (tab === 'library') { loadLibrary(); loadEncodeQueue(); }
     if (tab === 'hardware') loadHardware();
     if (tab === 'logs') renderLogs();
   }
@@ -536,6 +535,18 @@
       <div style="font-size:12px;color:var(--a-text-muted)">Workers actifs : ${status.activeJobs}/${status.workerCount}</div>
     `;
 
+    // Update badge on panel header
+    const badge = $('#encode-badge');
+    if (badge) {
+      const activeCount = counts.encoding + counts.pending;
+      if (activeCount > 0) {
+        badge.textContent = activeCount;
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
     // Jobs list
     const list = $('#encode-queue');
     if (!jobs || !jobs.length) {
@@ -563,6 +574,8 @@
           <div class="enc-job-actions">
             ${j.status === 'pending' ? `<button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
             ${j.status === 'error' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
+            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
+            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
             ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('delete',${j.id})">🗑</button>` : ''}
           </div>
         </div>`;
@@ -575,14 +588,41 @@
       if (act === 'cancel') await api(`/encode/cancel/${id}`, { method: 'POST' });
       else if (act === 'retry') await api(`/encode/retry/${id}`, { method: 'POST' });
       else if (act === 'delete') await api(`/encode/job/${id}`, { method: 'DELETE' });
+      else if (act === 'log') { showJobLog(id); return; }
       loadEncodeQueue();
     } catch (e) { toast(e.message, 'error'); }
   };
 
+  async function showJobLog(jobId) {
+    try {
+      const headers = { 'Authorization': `Bearer ${token}` };
+      const res = await fetch(`/api/encode/job/${jobId}/log`, { headers });
+      if (!res.ok) { toast('Log non disponible', 'warn'); return; }
+      const text = await res.text();
+      const modal = document.getElementById('log-modal') || createLogModal();
+      modal.querySelector('.log-modal-content').textContent = text || '(vide)';
+      modal.querySelector('.log-modal-title').textContent = `Log — Job #${jobId}`;
+      modal.style.display = '';
+    } catch (e) { toast(`Erreur: ${e.message}`, 'error'); }
+  }
+
+  function createLogModal() {
+    const modal = document.createElement('div');
+    modal.id = 'log-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:900px;width:90vw">
+        <div class="modal-header"><h3 class="log-modal-title">Log</h3><button class="modal-close" onclick="document.getElementById('log-modal').style.display='none'">✕</button></div>
+        <div class="modal-body"><pre class="log-modal-content" style="max-height:60vh;overflow:auto;font-size:11px;background:var(--a-surface2);padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-all;color:var(--a-text-muted)"></pre></div>
+      </div>`;
+    document.body.appendChild(modal);
+    return modal;
+  }
+
   // SSE handlers
   function handleJobUpdate(d) {
-    // Refresh encode queue if tab active
-    if ($('#tab-encode').classList.contains('active')) loadEncodeQueue();
+    // Refresh encode queue if library tab is active (queue is now inside library)
+    if ($('#tab-library').classList.contains('active')) loadEncodeQueue();
     if (d.status === 'done') {
       toast(`Encodage terminé : job #${d.id}`, 'success');
       loadDashboard();
@@ -652,8 +692,20 @@
       libSelected.clear();
       updateSelectionBar();
       loadEncodeQueue();
+      // Ensure encode panel is visible
+      const body = $('#encode-panel-body');
+      if (body) body.style.display = '';
     } catch (e) { toast(e.message, 'error'); }
   });
+
+  // Encode panel toggle
+  const encPanelToggle = $('#encode-panel-toggle');
+  if (encPanelToggle) {
+    encPanelToggle.addEventListener('click', () => {
+      const body = $('#encode-panel-body');
+      body.style.display = body.style.display === 'none' ? '' : 'none';
+    });
+  }
 
   /* ═══════════════════════════════════════════════════════
      HARDWARE
