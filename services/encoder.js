@@ -59,6 +59,9 @@ const active = new Map();     // jobId -> { proc, video_id, cancel }
 let running = true;
 let workerCount = MAX_WORKERS;
 let _processing = false;
+let _processingTs = 0;          // timestamp when _processing was set
+const PROCESSING_TIMEOUT = 30000; // 30s safety valve
+let _watchdogTimer = null;
 
 /* ─── Encoder capability cache ───────────────────────────────── */
 const encoderCaps = new Map();
@@ -719,6 +722,7 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
 
         let lastProgress = {};
         let stderrBuf = '';
+        let lastDbProgressUpdate = 0;
 
         proc.stdout.on('data', (chunk) => {
           const lines = chunk.toString().split('\n');
@@ -734,6 +738,12 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
               fps: lastProgress.fps || '',
               size: lastProgress.total_size || '',
             });
+            // Persist progress to DB every 5 seconds so it survives page refresh
+            const now = Date.now();
+            if (now - lastDbProgressUpdate > 5000) {
+              lastDbProgressUpdate = now;
+              db.getPool().query('UPDATE encode_jobs SET progress=? WHERE id=?', [pct, job.id]).catch(() => {});
+            }
           }
         });
 
@@ -780,8 +790,15 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
 /* ─── Queue processor ────────────────────────────────────────── */
 
 async function processQueue() {
-  if (_processing || !running) return;
+  if (!running) return;
+  // Safety valve: if _processing stuck for >30s, force-reset it
+  if (_processing && (Date.now() - _processingTs > PROCESSING_TIMEOUT)) {
+    logger.warn('encoder', `processQueue lock stuck for ${Math.round((Date.now() - _processingTs)/1000)}s — force-releasing`);
+    _processing = false;
+  }
+  if (_processing) return;
   _processing = true;
+  _processingTs = Date.now();
   try {
     const pool = db.getPool();
     while (running && active.size < workerCount) {
@@ -811,6 +828,7 @@ async function processQueue() {
     logger.error('encoder', `Queue error: ${e.message}`);
   }
   _processing = false;
+  _processingTs = 0;
 }
 
 /* ─── Job recovery on startup ────────────────────────────────── */
@@ -935,11 +953,19 @@ async function start() {
   running = true;
   await recoverStalledJobs();
   setImmediate(processQueue);
+  // Watchdog: periodically nudge the queue in case it got stuck
+  if (_watchdogTimer) clearInterval(_watchdogTimer);
+  _watchdogTimer = setInterval(() => {
+    if (running && active.size < workerCount) {
+      setImmediate(processQueue);
+    }
+  }, 10000);
   logger.info('encoder', `Encoder started with ${workerCount} worker(s)`);
 }
 
 function stop() {
   running = false;
+  if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
   for (const e of active.values()) e.cancel();
   logger.info('encoder', 'Encoder stopped');
 }

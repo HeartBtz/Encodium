@@ -25,6 +25,7 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   charset: 'utf8mb4',
   timezone: '+00:00',
+  connectTimeout: 10000,      // 10s connection timeout
 });
 
 async function safeAlter(conn, sql) {

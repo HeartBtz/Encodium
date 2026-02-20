@@ -101,7 +101,11 @@
     checkSyncOnLoad();
     checkEnrichOnLoad();
     checkThumbsOnLoad();
-    switchTab('dashboard');
+    // Restore last active tab, default to dashboard
+    const savedTab = localStorage.getItem('enc_activeTab') || 'dashboard';
+    switchTab(savedTab);
+    // Always pre-load encode queue so SSE progress updates work after refresh
+    loadEncodeQueue();
   }
 
   function logout() {
@@ -167,6 +171,7 @@
   function switchTab(tab) {
     $$('.sidenav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     $$('.admin-tab').forEach(s => s.classList.toggle('active', s.id === `tab-${tab}`));
+    localStorage.setItem('enc_activeTab', tab);
     if (tab === 'library') { loadLibrary(); loadEncodeQueue(); }
     if (tab === 'hardware') loadHardware();
     if (tab === 'logs') renderLogs();
@@ -712,8 +717,8 @@
 
   // SSE handlers
   function handleJobUpdate(d) {
-    // Refresh encode queue if library tab is active (queue is now inside library)
-    if ($('#tab-library').classList.contains('active')) loadEncodeQueue();
+    // Always refresh encode queue on job status changes
+    loadEncodeQueue();
     if (d.status === 'done') {
       toast(`Encodage terminé : job #${d.id}`, 'success');
       loadDashboard();
