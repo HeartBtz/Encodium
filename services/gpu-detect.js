@@ -103,45 +103,6 @@ async function detectAll(force = false) {
     presets.push({ id: 'cpu_av1_aom', label: 'AV1 CPU (libaom — slow)', encoder: 'libaom-av1', codec: 'av1', type: 'cpu' });
   }
 
-  // ── SmartShrink presets (SSIM-guided, experimental) ────────
-  // Auto-select the best available encoder for each codec.
-  // Only include GPU encoders when corresponding hardware is actually present.
-  {
-    const h265Order = [];
-    const av1Order  = [];
-    const typeMap = { hevc_nvenc: 'nvidia', av1_nvenc: 'nvidia', hevc_vaapi: 'vaapi', av1_vaapi: 'vaapi', hevc_qsv: 'qsv', av1_qsv: 'qsv', libx265: 'cpu', libsvtav1: 'cpu', 'libaom-av1': 'cpu' };
-
-    if (nvidia.length > 0) { h265Order.push('hevc_nvenc'); av1Order.push('av1_nvenc'); }
-    if (vaapi.length > 0)  { h265Order.push('hevc_vaapi'); av1Order.push('av1_vaapi'); }
-    if (hasRenderDev)      { h265Order.push('hevc_qsv');   av1Order.push('av1_qsv'); }
-    h265Order.push('libx265');
-    av1Order.push('libsvtav1', 'libaom-av1');
-
-    const bestH265 = h265Order.find(e => encoderSet.has(e));
-    const bestAv1  = av1Order.find(e => encoderSet.has(e));
-
-    if (bestH265) {
-      presets.unshift({
-        id: 'smartshrink_h265', label: '🧠 SmartShrink H.265 (SSIM)',
-        encoder: bestH265, codec: 'h265',
-        type: typeMap[bestH265], baseType: typeMap[bestH265],
-        smartshrink: true,
-        ...(typeMap[bestH265] === 'nvidia' && nvidia.length > 1 ? { gpuCount: nvidia.length } : {}),
-        ...(typeMap[bestH265] === 'nvidia' && nvidia.length === 1 ? { gpuIndex: 0 } : {}),
-      });
-    }
-    if (bestAv1) {
-      presets.unshift({
-        id: 'smartshrink_av1', label: '🧠 SmartShrink AV1 (SSIM)',
-        encoder: bestAv1, codec: 'av1',
-        type: typeMap[bestAv1], baseType: typeMap[bestAv1],
-        smartshrink: true,
-        ...(typeMap[bestAv1] === 'nvidia' && nvidia.length > 1 ? { gpuCount: nvidia.length } : {}),
-        ...(typeMap[bestAv1] === 'nvidia' && nvidia.length === 1 ? { gpuIndex: 0 } : {}),
-      });
-    }
-  }
-
   _cache = { nvidia, vaapi, encoders, presets };
   _cacheTs = Date.now();
   console.log(`[hw] ${nvidia.length} NVIDIA, ${vaapi.length} VA-API, ${encoders.length} encoders, ${presets.length} presets`);

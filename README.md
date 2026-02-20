@@ -16,7 +16,6 @@
 - **Database Sync** — Remove orphan entries and discover new files without a full rescan
 
 ### Encoding Engine
-- **SmartShrink** — SSIM-guided binary-search CRF optimisation (experimental) with configurable quality tiers
 - **Size Guard** — Rejects encodes that are larger than the original, keeping the source intact
 - **HDR Preservation** — 10-bit/HDR10 color metadata detection and passthrough
 - **HDR → SDR Tonemapping** — Optional zscale-based tonemap filter chain
@@ -194,7 +193,7 @@ Encodium/
 ├── middleware/
 │   └── auth.js            # JWT authentication
 ├── services/
-│   ├── encoder.js         # Encoding engine, queue, SmartShrink
+│   ├── encoder.js         # Encoding engine, queue
 │   ├── gpu-detect.js      # Hardware detection
 │   └── logger.js          # Centralized logging + SSE
 ├── routes/

@@ -421,30 +421,6 @@ body {
 .enc-job-pct { font-size: 11px; color: var(--a-text-muted); text-align: right; }
 .enc-job-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
-/* ── SmartShrink badges ─────────────────────────────────── */
-.ss-badge {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, #6c5ce7, #a855f7);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  vertical-align: middle;
-}
-.ss-quality {
-  display: inline-block;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--a-surface3);
-  color: var(--a-purple);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: capitalize;
-  vertical-align: middle;
-}
-
 /* ── Encode panel badge ─────────────────────────────────── */
 .enc-badge {
   display: inline-flex; align-items: center; justify-content: center;

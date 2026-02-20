@@ -385,7 +385,7 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
 
       // Find best hardware preset for this codec
       const caps = await gpuDetect.detectAll();
-      const hwPreset = caps.presets.find(p => p.codec === cp.codec && !p.smartshrink);
+      const hwPreset = caps.presets.find(p => p.codec === cp.codec);
       if (!hwPreset) return res.status(400).json({ error: `No encoder available for codec ${cp.codec}` });
       presetId = hwPreset.id;
       // Override with custom CQ
