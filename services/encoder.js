@@ -1,24 +1,16 @@
 /**
- * services/encoder.js — Video encoding engine (v2)
+ * services/encoder.js — Video encoding engine
  *
- * Queue-based multi-worker encoder with GPU allocation,
- * progress tracking, SSE event broadcast, and robust
- * ffmpeg invocation inspired by av1encoder.sh.
- *
- * Key improvements over v1:
- *  - GPU decode fallback to CPU decode on hwaccel failure
- *  - No -hwaccel_output_format cuda (avoids auto_scale errors)
- *  - CUDA_VISIBLE_DEVICES instead of -gpu (more reliable)
- *  - HDR/10-bit detection and color metadata preservation
- *  - Dolby Vision detection (skip to avoid losing DV metadata)
- *  - Bad subtitle stream filtering for MKV muxing
- *  - Output validation (codec, duration, file size checks)
- *  - Full stream mapping (metadata, chapters, attachments)
- *  - Encoder capability probing (tune, spatial_aq, rc modes)
- *  - Proper rate control per encoder (constqp for AV1, vbr_hq for HEVC)
- *  - MKV container for AV1 (better stream compatibility)
- *  - Per-job log files for post-mortem debugging
- *  - Job crash recovery on startup
+ * Queue-based multi-worker encoder with:
+ *  - GPU allocation & multi-GPU load balancing
+ *  - GPU→CPU decode fallback on hwaccel failure
+ *  - HDR/10-bit preservation, Dolby Vision detection
+ *  - SmartShrink (SSIM-guided CRF optimisation)
+ *  - Size guard (rejects encodes larger than original)
+ *  - Output validation (codec, duration, integrity)
+ *  - Per-job ffmpeg logs, job crash recovery
+ *  - Schedule window, webhook notifications
+ *  - SSE real-time progress broadcast
  */
 'use strict';
 

@@ -1,6 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   Encodium — Admin Panel
-   Adapted from XFlix admin dark theme
+   Encodium — Admin Panel (Dark Theme)
    ═══════════════════════════════════════════════════════════ */
 
 /* ── Theme tokens ───────────────────────────────────────── */
@@ -525,23 +524,6 @@ body {
 /* ── Hidden ─────────────────────────────────────────────── */
 .hidden { display: none !important; }
 
-/* ── Video play button overlay ──────────────────────────── */
-.mb-card-thumb { position: relative; }
-.mb-card-thumb img { width: 100%; display: block; }
-.mb-play-btn {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  width: 40px; height: 40px; border-radius: 50%;
-  background: rgba(0,0,0,.55); color: #fff; border: 2px solid rgba(255,255,255,.5);
-  font-size: 16px; cursor: pointer; opacity: 0; transition: opacity .2s;
-  display: flex; align-items: center; justify-content: center;
-}
-.mb-card:hover .mb-play-btn { opacity: 1; }
-.mb-play-btn:hover { background: rgba(var(--a-accent-rgb, 99,102,241),.85); border-color: #fff; }
-
-/* ── Form helpers ───────────────────────────────────────── */
-.form-row { display: flex; }
-.form-inline { display: flex; }
-
 /* ── Scrollbar ──────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -554,13 +536,9 @@ body {
   .admin-main { padding: 16px; }
 }
 
-/* ── Video player play button ───────────────────────────── */
-.mb-card-thumb {
-  position: relative; display: block;
-}
-.mb-card-thumb img {
-  width: 100%; display: block;
-}
+/* ── Video player ───────────────────────────────────────── */
+.mb-card-thumb { position: relative; display: block; }
+.mb-card-thumb img { width: 100%; display: block; }
 .mb-play-btn {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: 40px; height: 40px; border-radius: 50%;

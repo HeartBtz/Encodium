@@ -1,38 +1,63 @@
 # Encodium
 
-**Video Encoding Platform** — A standalone web application for scanning, browsing, searching, and batch-encoding video files using hardware-accelerated (GPU) or CPU encoders.
+**Video Encoding Platform** — A standalone web application for scanning, browsing, and batch-encoding video files using hardware-accelerated (GPU) or CPU encoders.
+
+![Node.js](https://img.shields.io/badge/node-18%2B-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
 ## Features
 
-- **Media Scanner** — Recursively scans a configured directory for video files, indexes them by folder structure, extracts metadata with ffprobe, and generates thumbnails
-- **Video Library** — Browse, search, and filter your video collection by filename, folder, codec, resolution, size, and duration
-- **Hardware Detection** — Automatically detects NVIDIA GPUs (NVENC), AMD/Intel VA-API, Intel QSV, and CPU encoders
-- **Batch Encoding** — Select multiple videos and encode them with H.265/HEVC or AV1 using detected hardware presets
-- **Multi-GPU Support** — Distributes encoding jobs across multiple GPUs with automatic load balancing
-- **Live Progress** — Real-time encoding progress via Server-Sent Events (SSE)
-- **Replace Original** — Option to replace source files with encoded output (cross-filesystem safe)
-- **Queue Management** — Configurable worker count, cancel/retry/delete jobs
-- **Server-side Resilience** — Encoding runs entirely on the server; closing the browser has no effect on active jobs. Stalled jobs are automatically recovered on server restart.
-- **Robust Encoding** — GPU→CPU decode fallback, output validation (codec, duration, file integrity), HDR/10-bit preservation, Dolby Vision detection, bad subtitle stream filtering, per-job log files
-- **Per-job Logs** — Detailed ffmpeg logs saved per job for easy debugging; accessible from the web UI
+### Core
+- **Media Scanner** — Recursively scans a configured directory, indexes files by folder, extracts metadata with ffprobe, generates thumbnails
+- **Video Library** — Browse, search, filter by filename, folder, codec, resolution, size, and duration
+- **Video Streaming** — HTML5 player with HTTP range-request support, directly from the UI
+- **Hardware Detection** — Auto-detects NVIDIA NVENC, AMD/Intel VA-API, Intel QSV, and CPU encoders
+- **Batch Encoding** — Select multiple videos, encode with H.265/HEVC or AV1 using detected presets
+- **Multi-GPU Support** — Automatic load-balanced distribution across multiple GPUs
+- **Database Sync** — Remove orphan entries and discover new files without a full rescan
+
+### Encoding Engine
+- **SmartShrink** — SSIM-guided binary-search CRF optimisation (experimental) with configurable quality tiers
+- **Size Guard** — Rejects encodes that are larger than the original, keeping the source intact
+- **HDR Preservation** — 10-bit/HDR10 color metadata detection and passthrough
+- **HDR → SDR Tonemapping** — Optional zscale-based tonemap filter chain
+- **Dolby Vision Protection** — Skips DV files to avoid data loss
+- **Container Choice** — MKV, MP4, or automatic (MKV for AV1)
+- **Downscale Presets** — 1080p, 720p, 480p output resolution options
+- **GPU → CPU Fallback** — Automatic retry with software decode on hwaccel failure
+- **Output Validation** — Checks codec, duration, file integrity after every encode
+- **Per-job Logs** — Detailed ffmpeg logs for every encoding job, accessible from UI
+- **Crash Recovery** — Stalled jobs automatically re-queued on server restart
+
+### Queue & Scheduling
+- **Queue Management** — Configurable worker count (1–8), cancel/retry/delete jobs
+- **Job Priority & Reorder** — Move jobs up/down in the queue
+- **Clear Queue** — Remove finished/errored/cancelled jobs from the queue
+- **Schedule Window** — Restrict encoding to a daily time window
+- **Persistent Savings** — Encoding savings tracked in a permanent ledger (survives queue clears and rescans)
+
+### Presets & Notifications
+- **Custom Presets** — Create reusable encoding presets (codec, CQ, container, downscale, tonemap)
+- **Webhook Notifications** — Discord and generic HTTP webhook at queue completion
+
+### UI & Monitoring
+- **Real-time Progress** — Server-Sent Events (SSE) for live encode progress, log streaming
+- **Stats Dashboard** — Video count, total size, duration, codec distribution, encoding savings
+- **Encoding Charts** — Daily savings history and before/after size comparison (Chart.js)
+- **Dark Theme** — Responsive single-page application
 - **Authentication** — JWT-based login with admin roles
-- **Dark Theme UI** — Responsive single-page application
 
 ## Requirements
 
 - **Node.js** 18+ (20 LTS recommended)
 - **MariaDB** 10.6+ or MySQL 8+
-- **ffmpeg** with ffprobe (for metadata extraction, thumbnails, and encoding)
-- Optional: NVIDIA GPU with drivers + NVENC support, or VA-API/QSV capable hardware
+- **ffmpeg** 6+ with ffprobe
+- Optional: NVIDIA GPU with drivers + NVENC, or VA-API/QSV hardware
 
 ## Quick Start
 
 ```bash
-# Clone
 git clone git@github.com:HeartBtz/Encodium.git
 cd Encodium
-
-# Run the install script (installs deps, sets up DB, creates .env, admin account, starts via PM2 + systemd)
 bash install.sh
 ```
 
@@ -40,60 +65,35 @@ Open **http://localhost:4000** and log in with:
 - Email: `admin@encodium.local`
 - Password: `admin`
 
+The install script handles dependencies, database creation, `.env` configuration, admin account setup, and PM2 + systemd service registration.
+
 ## Process Management
 
-The installer automatically configures **both** PM2 and systemd:
-
-### PM2 (preferred for development & easy management)
+### PM2 (recommended)
 ```bash
-pm2 status              # List processes
-pm2 logs encodium       # Live logs
-pm2 restart encodium    # Restart
-pm2 stop encodium       # Stop
-pm2 delete encodium     # Remove from PM2
+pm2 status
+pm2 logs encodium
+pm2 restart encodium
+pm2 stop encodium
 ```
 
-PM2 is configured to auto-start on boot via `pm2 startup` + `pm2 save`.
-
-### Systemd (production, server-grade)
+### Systemd
 ```bash
-sudo systemctl status encodium     # Status
-sudo systemctl restart encodium    # Restart
-sudo systemctl stop encodium       # Stop
-journalctl -u encodium -f          # Live logs
+sudo systemctl status encodium
+sudo systemctl restart encodium
+journalctl -u encodium -f
 ```
-
-> **Note:** By default the installer starts Encodium via PM2. To use systemd instead, stop PM2 (`pm2 stop encodium`) and start the service (`sudo systemctl start encodium`).
-
-## Encoding Resilience
-
-Encodium is designed for reliability:
-
-- **Server-side execution** — Encoding runs on the Node.js server. Closing the browser, refreshing the page, or losing network connectivity has **zero** impact on active encodes.
-- **Crash recovery** — If the server restarts (crash, reboot, deploy), any jobs that were mid-encode are automatically re-queued on startup.
-- **GPU decode fallback** — If CUDA hardware-accelerated decode fails, the encoder automatically retries with CPU software decode.
-- **Output validation** — After encoding, the output file is verified: correct codec, valid duration (not truncated), non-empty file. Invalid outputs are rejected rather than silently replacing originals.
-- **HDR preservation** — 10-bit color depth, color primaries, transfer characteristics, and color space are detected and preserved.
-- **Dolby Vision protection** — Files with Dolby Vision metadata are skipped to avoid losing DV data during re-encoding.
-- **Subtitle safety** — Subtitle streams that would cause MKV muxing failures (unknown codecs, webvtt) are automatically dropped.
-- **Per-job log files** — Every encoding job gets a detailed log file (`data/logs/job_<id>.log`) capturing ffprobe results, ffmpeg commands, stderr output, and validation results. Viewable from the web UI.
 
 ## Manual Setup
 
 ```bash
-# 1. Install Node.js dependencies
 npm install
 
-# 2. Create the database
 mysql -u root -e "CREATE DATABASE encodium CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 mysql -u root -e "CREATE USER 'encodium'@'localhost' IDENTIFIED BY 'yourpassword';"
 mysql -u root -e "GRANT ALL ON encodium.* TO 'encodium'@'localhost'; FLUSH PRIVILEGES;"
 
-# 3. Create .env from example
-cp .env.example .env
-# Edit .env with your DB credentials, MEDIA_DIR, ENCODE_DIR, etc.
-
-# 4. Start
+cp .env.example .env   # Edit with your settings
 node server.js
 ```
 
@@ -108,99 +108,125 @@ node server.js
 | `DB_NAME` | `encodium` | Database name |
 | `JWT_SECRET` | — | Secret for JWT token signing |
 | `PORT` | `4000` | HTTP server port |
-| `MEDIA_DIR` | — | Path to your video library to scan |
+| `MEDIA_DIR` | — | Path to your video library |
 | `ENCODE_DIR` | `./data/encoded` | Output directory for encoded files |
 | `MAX_WORKERS` | `2` | Concurrent encoding workers |
 
 ## CLI
 
 ```bash
-node cli.js scan      # Scan MEDIA_DIR, enrich metadata, generate thumbnails
+node cli.js scan      # Full scan + enrich + thumbnails
 node cli.js enrich    # Re-run ffprobe metadata extraction
 node cli.js thumbs    # Generate missing thumbnails
 node cli.js clear     # Clear all videos from database
 node cli.js stats     # Show database statistics
 ```
 
-## API Endpoints
+## API
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/auth/login` | Login (email + password) |
+| **Auth** | | |
+| POST | `/api/auth/login` | Login |
 | GET | `/api/auth/me` | Current user info |
+| **Scanner** | | |
 | POST | `/api/scan` | Start media scan |
 | GET | `/api/scan/progress` | Scan progress |
 | POST | `/api/scan/cancel` | Cancel scan |
-| POST | `/api/enrich` | Enrich video metadata |
-| POST | `/api/thumbs` | Generate thumbnails |
-| GET | `/api/videos` | List/search videos (q, folder, codec, sort, order, page, limit) |
+| POST | `/api/sync` | Sync database (orphan removal + new file discovery) |
+| POST | `/api/enrich` | Enrich video metadata (ffprobe) |
+| POST | `/api/thumbs` | Generate missing thumbnails |
+| **Videos** | | |
+| GET | `/api/videos` | List / search / filter videos |
 | GET | `/api/videos/:id` | Single video details |
+| POST | `/api/videos/delete` | Bulk delete videos |
 | GET | `/api/folders` | Folder list with counts |
 | GET | `/api/codec-stats` | Codec distribution |
-| GET | `/api/stats` | Dashboard stats |
-| GET | `/api/thumb/:id` | Thumbnail image |
+| GET | `/api/stats` | Dashboard stats (videos, jobs, savings) |
+| GET | `/api/stats/history` | Daily encoding stats (last 30 days) |
+| GET | `/api/thumb/:id` | Thumbnail (on-the-fly generation if missing) |
+| GET | `/api/stream/:id` | Video stream (range requests) |
+| **Encoding** | | |
 | GET | `/api/encode/capabilities` | Detected hardware + presets |
 | GET | `/api/encode/status` | Encoder queue status |
 | GET | `/api/encode/history` | Encode job history |
 | POST | `/api/encode/enqueue` | Enqueue encoding jobs |
 | POST | `/api/encode/cancel/:id` | Cancel a job |
-| POST | `/api/encode/cancel-all` | Cancel all pending |
+| POST | `/api/encode/cancel-all` | Cancel all pending jobs |
+| POST | `/api/encode/clear-finished` | Clear finished/errored/cancelled jobs |
 | POST | `/api/encode/retry/:id` | Retry a failed job |
 | DELETE | `/api/encode/job/:id` | Delete a job |
 | GET | `/api/encode/job/:id/log` | View detailed job log |
+| POST | `/api/encode/job/:id/priority` | Set job priority |
+| POST | `/api/encode/job/:id/move` | Move job up/down in queue |
 | POST | `/api/encode/workers` | Set worker count |
+| **Settings** | | |
+| GET/POST | `/api/settings/schedule` | Encoding schedule window |
+| GET/POST | `/api/settings/notifications` | Webhook configuration |
+| GET/POST/DELETE | `/api/custom-presets` | Custom preset CRUD |
+| **Other** | | |
 | GET | `/api/events` | SSE stream (live updates) |
 | GET | `/api/logs` | Recent application logs |
-| POST | `/api/clear` | Clear database (admin) |
+| POST | `/api/clear` | Clear database (admin only) |
 
-## Supported Codecs
+## Supported Encoders
 
-### Hardware (if available)
-- **NVIDIA NVENC**: H.265, AV1 (multi-GPU with automatic load balancing)
+### Hardware
+- **NVIDIA NVENC**: H.265, AV1 (multi-GPU load balancing)
 - **AMD/Intel VA-API**: H.265, AV1
 - **Intel QSV**: H.265, AV1
 
-### Software (CPU)
+### Software
 - **libx265**: H.265/HEVC
 - **SVT-AV1**: AV1 (recommended CPU encoder)
-- **libaom-av1**: AV1 (slow, fallback)
+- **libaom-av1**: AV1 (fallback)
 
 ## Architecture
 
 ```
 Encodium/
 ├── server.js              # Express entry point
-├── db.js                  # MariaDB schema + helpers
-├── scanner.js             # Media directory scanner
+├── db.js                  # MariaDB schema, migrations, helpers
+├── scanner.js             # Media scanner, metadata enrichment, sync
 ├── cli.js                 # CLI commands
 ├── install.sh             # Installation script
+├── ecosystem.config.js    # PM2 configuration
 ├── middleware/
 │   └── auth.js            # JWT authentication
 ├── services/
-│   ├── encoder.js         # Encoding engine + queue (v2 — robust)
+│   ├── encoder.js         # Encoding engine, queue, SmartShrink
 │   ├── gpu-detect.js      # Hardware detection
 │   └── logger.js          # Centralized logging + SSE
 ├── routes/
 │   └── api.js             # All API endpoints
 ├── public/
 │   ├── index.html         # SPA shell
-│   ├── css/style.css      # Dark theme styles
+│   ├── css/style.css      # Dark theme
 │   ├── js/app.js          # Frontend application
 │   └── img/               # Static assets
 └── data/
-    ├── logs/              # Per-job encoding logs + PM2 logs
+    ├── logs/              # Per-job ffmpeg logs
     ├── thumbs/            # Generated thumbnails
-    └── encoded/           # Encoded output files
+    └── encoded/           # Encoded output staging
 ```
 
-## Debugging Encoding Issues
+## Database Schema
 
-When an encode fails:
+| Table | Purpose |
+|---|---|
+| `users` | Admin authentication |
+| `videos` | Scanned video files & metadata |
+| `encode_jobs` | Encoding queue & job history |
+| `settings` | Key-value app settings |
+| `encoding_savings` | Permanent encoding savings ledger |
+| `custom_presets` | User-defined encoding presets |
 
-1. **Check the job log** — Click the 📋 button on any job in the Encode tab to view its detailed log.
-2. **Check application logs** — Go to the Logs tab for real-time application events.
-3. **Check PM2 logs** — `pm2 logs encodium` for server-side output.
-4. **Check per-job log files** — `cat data/logs/job_<id>.log` contains full ffprobe output, ffmpeg command lines, stderr, and validation results.
+## Debugging
+
+1. **Job log** — Click 📋 on any job in the encode queue
+2. **Application logs** — Logs tab in the web UI
+3. **PM2 logs** — `pm2 logs encodium`
+4. **Job log files** — `cat data/logs/job_<id>.log`
 
 ## License
 

@@ -26,9 +26,9 @@ const THUMB_DIR  = process.env.THUMB_DIR || path.join(__dirname, 'data', 'thumbs
 
 if (!fs.existsSync(THUMB_DIR)) fs.mkdirSync(THUMB_DIR, { recursive: true });
 
-let ffmpeg, ffprobeBin;
+let ffmpeg;
 try { ffmpeg = require('fluent-ffmpeg'); } catch { ffmpeg = null; }
-try { const fp = require('ffprobe-static'); if (ffmpeg) ffmpeg.setFfprobePath(fp.path); ffprobeBin = fp.path; } catch {}
+try { const fp = require('ffprobe-static'); if (ffmpeg) ffmpeg.setFfprobePath(fp.path); } catch {}
 
 /* ── Scan state ──────────────────────────────────────────── */
 let scanProgress = {

@@ -14,6 +14,7 @@ const path       = require('path');
 const db      = require('./db');
 const encoder = require('./services/encoder');
 const api     = require('./routes/api');
+const { version } = require('./package.json');
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 const app  = express();
@@ -62,7 +63,7 @@ async function boot() {
 
   app.listen(PORT, () => {
     console.log(`\n  ╔══════════════════════════════════════╗`);
-    console.log(`  ║   Encodium v1.0.0                    ║`);
+    console.log(`  ║   Encodium v${version.padEnd(24)}║`);
     console.log(`  ║   http://localhost:${PORT}              ║`);
     console.log(`  ╚══════════════════════════════════════╝\n`);
   });

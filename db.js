@@ -1,11 +1,13 @@
 /**
  * db.js — Encodium database layer
  *
- * Own MariaDB database with tables:
- *   - users        : admin authentication
- *   - videos       : scanned video files
- *   - encode_jobs  : encoding queue & history
- *   - settings     : key-value app settings
+ * MariaDB schema & helpers. Tables:
+ *   - users             : admin authentication
+ *   - videos            : scanned video files
+ *   - encode_jobs       : encoding queue & history
+ *   - settings          : key‑value app settings
+ *   - encoding_savings  : persistent encode savings ledger
+ *   - custom_presets    : user-defined encoding presets
  */
 'use strict';
 
