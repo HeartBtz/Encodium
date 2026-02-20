@@ -91,9 +91,10 @@ async function detectAll(force = false) {
     if (encoderSet.has('av1_vaapi'))  presets.push({ id: `vaapi_av1_${dev.device.replace(/\//g, '_')}`,  label: `AV1 VA-API — ${dev.vendor} (${dev.device})`,  encoder: 'av1_vaapi',  codec: 'av1',  type: 'vaapi', renderDevice: dev.device, device: `${dev.vendor} ${dev.device}` });
   }
 
-  // Intel QSV
-  if (encoderSet.has('hevc_qsv')) presets.push({ id: 'qsv_h265', label: 'H.265 Intel QSV', encoder: 'hevc_qsv', codec: 'h265', type: 'qsv' });
-  if (encoderSet.has('av1_qsv'))  presets.push({ id: 'qsv_av1',  label: 'AV1 Intel QSV',   encoder: 'av1_qsv',  codec: 'av1',  type: 'qsv' });
+  // Intel QSV — only if a render device exists (iGPU / dGPU)
+  const hasRenderDev = await run('ls', ['/dev/dri/'], 3000).then(o => o.includes('renderD'));
+  if (hasRenderDev && encoderSet.has('hevc_qsv')) presets.push({ id: 'qsv_h265', label: 'H.265 Intel QSV', encoder: 'hevc_qsv', codec: 'h265', type: 'qsv' });
+  if (hasRenderDev && encoderSet.has('av1_qsv'))  presets.push({ id: 'qsv_av1',  label: 'AV1 Intel QSV',   encoder: 'av1_qsv',  codec: 'av1',  type: 'qsv' });
 
   // CPU fallbacks
   if (encoderSet.has('libx265'))   presets.push({ id: 'cpu_h265', label: 'H.265 CPU (libx265)', encoder: 'libx265',   codec: 'h265', type: 'cpu' });
@@ -103,11 +104,18 @@ async function detectAll(force = false) {
   }
 
   // ── SmartShrink presets (SSIM-guided, experimental) ────────
-  // Auto-select the best available encoder for each codec
+  // Auto-select the best available encoder for each codec.
+  // Only include GPU encoders when corresponding hardware is actually present.
   {
-    const h265Order = ['hevc_nvenc', 'hevc_vaapi', 'hevc_qsv', 'libx265'];
-    const av1Order  = ['av1_nvenc', 'av1_vaapi', 'av1_qsv', 'libsvtav1', 'libaom-av1'];
+    const h265Order = [];
+    const av1Order  = [];
     const typeMap = { hevc_nvenc: 'nvidia', av1_nvenc: 'nvidia', hevc_vaapi: 'vaapi', av1_vaapi: 'vaapi', hevc_qsv: 'qsv', av1_qsv: 'qsv', libx265: 'cpu', libsvtav1: 'cpu', 'libaom-av1': 'cpu' };
+
+    if (nvidia.length > 0) { h265Order.push('hevc_nvenc'); av1Order.push('av1_nvenc'); }
+    if (vaapi.length > 0)  { h265Order.push('hevc_vaapi'); av1Order.push('av1_vaapi'); }
+    if (hasRenderDev)      { h265Order.push('hevc_qsv');   av1Order.push('av1_qsv'); }
+    h265Order.push('libx265');
+    av1Order.push('libsvtav1', 'libaom-av1');
 
     const bestH265 = h265Order.find(e => encoderSet.has(e));
     const bestAv1  = av1Order.find(e => encoderSet.has(e));
