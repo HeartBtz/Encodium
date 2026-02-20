@@ -893,7 +893,12 @@ async function processJob(job) {
     }
 
     if (result.code !== 0) {
-      const errMsg = `ffmpeg exited with code ${result.code}.\n${result.stderr.slice(-2000)}`;
+      // Extract meaningful error lines from stderr (skip metadata/progress noise)
+      const allStderr = result.stderrHead + '\n' + result.stderrTail;
+      const errorLines = allStderr.split('\n').filter(l =>
+        /error|cannot|invalid|failed|not found|no such|denied|killed|abort|segfault|signal/i.test(l)
+      ).slice(0, 20).join('\n');
+      const errMsg = `ffmpeg exited with code ${result.code}.\n${errorLines || result.stderrTail.slice(-2000)}`;
       jobLog.error(errMsg);
       await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
         [errMsg.slice(0, 5000), job.id]);
@@ -1052,7 +1057,9 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
         entry.proc = proc;
 
         let lastProgress = {};
-        let stderrBuf = '';
+        let stderrHead = '';   // first 5KB (captures init errors)
+        let stderrTail = '';   // rolling last 30KB
+        let stderrTotal = 0;
         let lastDbProgressUpdate = 0;
 
         proc.stdout.on('data', (chunk) => {
@@ -1080,15 +1087,19 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
 
         proc.stderr.on('data', (d) => {
           const text = d.toString();
-          stderrBuf += text;
-          if (stderrBuf.length > 50000) stderrBuf = stderrBuf.slice(-30000);
+          stderrTotal += text.length;
+          // Keep the first 5KB to capture init/encoder errors
+          if (stderrHead.length < 5000) stderrHead += text.slice(0, 5000 - stderrHead.length);
+          // Rolling tail for runtime errors
+          stderrTail += text;
+          if (stderrTail.length > 50000) stderrTail = stderrTail.slice(-30000);
           jobLog.writeRaw(text);
         });
 
-        proc.on('close', (code) => res({ code, stderr: stderrBuf, cancelled }));
+        proc.on('close', (code) => res({ code, stderrHead, stderrTail, cancelled }));
         proc.on('error', (e) => {
           jobLog.error(`ffmpeg process error: ${e.message}`);
-          res({ code: -1, stderr: `Process error: ${e.message}`, cancelled });
+          res({ code: -1, stderrHead: `Process error: ${e.message}`, stderrTail: '', cancelled });
         });
       });
     }
