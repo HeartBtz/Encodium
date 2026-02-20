@@ -1,0 +1,101 @@
+# ══════════════════════════════════════════════════════════
+#  Encodium — Docker Compose
+# ══════════════════════════════════════════════════════════
+#
+#  Usage:
+#    docker compose up -d          # CPU only
+#    docker compose --profile gpu up -d   # With NVIDIA GPU
+#
+#  First run creates the admin account via CLI:
+#    docker compose exec encodium node cli.js useradd admin@example.com yourpassword
+#
+
+services:
+  # ── MariaDB ──────────────────────────────────────────────
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS:-encodium_root_secret}
+      MARIADB_DATABASE: ${DB_NAME:-encodium}
+      MARIADB_USER: ${DB_USER:-encodium}
+      MARIADB_PASSWORD: ${DB_PASS:-encodium_secret}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Encodium (CPU) ──────────────────────────────────────
+  encodium:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-encodium}
+      DB_PASS: ${DB_PASS:-encodium_secret}
+      DB_NAME: ${DB_NAME:-encodium}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      PORT: 4000
+      MEDIA_DIR: /media
+      ENCODE_DIR: /app/data/encoded
+      MAX_WORKERS: ${MAX_WORKERS:-2}
+    volumes:
+      # Mount your video library (read-only if you don't use replace-original)
+      - ${MEDIA_DIR:-./data/media}:/media
+      # Persist encoded files, thumbnails, logs
+      - encodium_encoded:/app/data/encoded
+      - encodium_thumbs:/app/data/thumbs
+      - encodium_logs:/app/data/logs
+
+  # ── Encodium (NVIDIA GPU) ───────────────────────────────
+  # Activate with: docker compose --profile gpu up -d
+  # Requires: nvidia-container-toolkit installed on the host
+  encodium-gpu:
+    build: .
+    profiles: ["gpu"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-encodium}
+      DB_PASS: ${DB_PASS:-encodium_secret}
+      DB_NAME: ${DB_NAME:-encodium}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      PORT: 4000
+      MEDIA_DIR: /media
+      ENCODE_DIR: /app/data/encoded
+      MAX_WORKERS: ${MAX_WORKERS:-2}
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ${MEDIA_DIR:-./data/media}:/media
+      - encodium_encoded:/app/data/encoded
+      - encodium_thumbs:/app/data/thumbs
+      - encodium_logs:/app/data/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+
+volumes:
+  db_data:
+  encodium_encoded:
+  encodium_thumbs:
+  encodium_logs:
