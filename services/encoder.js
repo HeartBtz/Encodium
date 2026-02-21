@@ -37,6 +37,35 @@ function broadcast(event, data) {
   for (const c of sseClients) { try { c.write(msg); } catch { sseClients.delete(c); } }
 }
 
+/* ─── Throttled SSE progress (max once per 800ms per job) ────── */
+const _progressThrottleMap = new Map(); // jobId → { timer, lastData }
+function broadcastProgress(data) {
+  const id = data.id;
+  let entry = _progressThrottleMap.get(id);
+  if (!entry) {
+    entry = { timer: null, lastData: null };
+    _progressThrottleMap.set(id, entry);
+  }
+  entry.lastData = data;
+  if (!entry.timer) {
+    // Send immediately on first call, then throttle
+    broadcast('job_progress', data);
+    entry.timer = setTimeout(() => {
+      if (entry.lastData && entry.lastData !== data) {
+        broadcast('job_progress', entry.lastData);
+      }
+      entry.timer = null;
+    }, 800);
+  }
+}
+function clearProgressThrottle(jobId) {
+  const entry = _progressThrottleMap.get(jobId);
+  if (entry) {
+    if (entry.timer) clearTimeout(entry.timer);
+    _progressThrottleMap.delete(jobId);
+  }
+}
+
 /* ─── Device tracker (prevent GPU double-use) ────────────────── */
 const deviceLocks = new Map();
 function lockDevice(devKey) { deviceLocks.set(devKey, (deviceLocks.get(devKey) || 0) + 1); }
@@ -601,7 +630,7 @@ async function processJob(job) {
     const outFile = replaceOriginal
       ? path.join(ENCODE_DIR, `${baseName}_enc_${job.id}${ext}`)
       : path.join(ENCODE_DIR, `${baseName}_${preset.codec}${ext}`);
-    tmpFile = `${outFile}.tmp.${job.id}${ext}`;
+    tmpFile = outFile.replace(/(\.[^.]+)$/, `.tmp.${job.id}$1`);
 
     jobLog.info(`Output: ${outFile}`);
     jobLog.info(`Temp: ${tmpFile}`);
@@ -780,6 +809,7 @@ async function processJob(job) {
   } finally {
     unlockDevice(devKey);
     active.delete(job.id);
+    clearProgressThrottle(job.id);
     if (tmpFile) { try { await fsp.unlink(tmpFile); } catch {} }
     await jobLog.close();
     // Fire webhook if queue is now empty
@@ -833,18 +863,21 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
             if (k && v) lastProgress[k] = v;
           }
           if (lastProgress.out_time_ms && video.duration) {
-            const pct = Math.min(100, Math.round((parseInt(lastProgress.out_time_ms, 10) / 1e6 / video.duration) * 100));
-            broadcast('job_progress', {
-              id: job.id, percent: pct,
-              speed: lastProgress.speed || '',
-              fps: lastProgress.fps || '',
-              size: lastProgress.total_size || '',
-            });
-            // Persist progress to DB every 5 seconds so it survives page refresh
-            const now = Date.now();
-            if (now - lastDbProgressUpdate > 5000) {
-              lastDbProgressUpdate = now;
-              db.getPool().query('UPDATE encode_jobs SET progress=? WHERE id=?', [pct, job.id]).catch(() => {});
+            const outTimeUs = parseInt(lastProgress.out_time_ms, 10);
+            if (!isNaN(outTimeUs) && outTimeUs >= 0) {
+              const pct = Math.min(100, Math.round((outTimeUs / 1e6 / video.duration) * 100));
+              broadcastProgress({
+                id: job.id, percent: pct,
+                speed: lastProgress.speed || '',
+                fps: lastProgress.fps || '',
+                size: lastProgress.total_size || '',
+              });
+              // Persist progress to DB every 5 seconds so it survives page refresh
+              const now = Date.now();
+              if (now - lastDbProgressUpdate > 5000) {
+                lastDbProgressUpdate = now;
+                db.getPool().query('UPDATE encode_jobs SET progress=? WHERE id=?', [pct, job.id]).catch(() => {});
+              }
             }
           }
         });
@@ -1100,7 +1133,7 @@ async function cancelPending() {
 async function retryJob(jobId) {
   const pool = db.getPool();
   const [[job]] = await pool.query('SELECT * FROM encode_jobs WHERE id=?', [jobId]);
-  if (!job || !['failed', 'error', 'cancelled'].includes(job.status)) throw new Error('Cannot retry this job');
+  if (!job || !['error', 'cancelled'].includes(job.status)) throw new Error('Cannot retry this job');
   await pool.query(
     "UPDATE encode_jobs SET status='pending', error=NULL, started_at=NULL, ended_at=NULL, output_path=NULL, output_size=NULL WHERE id=?",
     [jobId]

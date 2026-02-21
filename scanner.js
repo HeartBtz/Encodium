@@ -237,6 +237,7 @@ async function scanDirectory(onProgress = null) {
       logger.success('scanner', `Scan complete: ${scanProgress.total} new, ${scanProgress.skipped} skipped, ${scanProgress.errors} errors`);
     }
     cancelRequested = false;
+    return { found: scanProgress.total + scanProgress.skipped, inserted: scanProgress.total, skipped: scanProgress.skipped, errors: scanProgress.errors };
   } catch (e) {
     scanProgress.running = false;
     scanProgress.finishedAt = new Date().toISOString();
@@ -354,11 +355,12 @@ async function syncDatabase() {
     // Phase 2: Add files on disk not in DB
     logger.info('sync', `Phase 2: Scanning disk for new files…`);
     const existingPaths = new Set(dbPaths.keys());
-    // Remove the orphan paths from existingPaths
+    // Remove the orphan paths from existingPaths — use reverse map for O(1) lookup
+    const idToPath = new Map();
+    for (const [fp, fid] of dbPaths) idToPath.set(fid, fp);
     for (const id of toRemove) {
-      for (const [fp, fid] of dbPaths) {
-        if (fid === id) { existingPaths.delete(fp); break; }
-      }
+      const fp = idToPath.get(id);
+      if (fp) existingPaths.delete(fp);
     }
 
     if (!fs.existsSync(MEDIA_DIR)) {

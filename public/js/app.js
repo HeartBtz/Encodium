@@ -68,6 +68,10 @@
   /* ── Live progress cache (survives queue re-renders) ─── */
   const liveProgress = new Map();   // jobId → { percent, speed, fps, text }
 
+  /* ── Encode queue reload guard (prevents flickering & stale overwrites) ─── */
+  let _eqGen = 0;            // generation counter — stale API responses are discarded
+  let _eqDebounceTimer = null;
+
   function toast(msg, type = 'info') {
     const c = $('#toast-container');
     const el = document.createElement('div');
@@ -760,10 +764,24 @@
      ═══════════════════════════════════════════════════════ */
 
   async function loadEncodeQueue() {
+    const gen = ++_eqGen;
     try {
       const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=5000')]);
+      if (gen !== _eqGen) return; // a newer request was made — discard stale result
       renderEncodeStatus(status, history.rows);
-    } catch (e) { toast(t('error.encoding', {msg: e.message}), 'error'); }
+    } catch (e) {
+      if (gen === _eqGen) toast(t('error.encoding', {msg: e.message}), 'error');
+    }
+  }
+
+  /** Debounced version — used by SSE handlers to avoid rapid re-renders */
+  function scheduleLoadEncodeQueue(delay) {
+    if (typeof delay !== 'number') delay = 400;
+    if (_eqDebounceTimer) clearTimeout(_eqDebounceTimer);
+    _eqDebounceTimer = setTimeout(() => {
+      _eqDebounceTimer = null;
+      loadEncodeQueue();
+    }, delay);
   }
 
   function renderEncodeStatus(status, jobs) {
@@ -879,8 +897,8 @@
     if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {
       liveProgress.delete(d.id);
     }
-    // Always refresh encode queue on job status changes
-    loadEncodeQueue();
+    // Debounced refresh — avoids rapid re-renders when many SSE events fire at once
+    scheduleLoadEncodeQueue(300);
     if (d.status === 'done') {
       if (d.skipped) {
         toast(t('toast.job_skipped', {id: d.id, reason: d.reason || ''}), 'info');

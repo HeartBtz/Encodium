@@ -67,6 +67,17 @@ async function boot() {
     console.log(`  ║   http://localhost:${PORT}              ║`);
     console.log(`  ╚══════════════════════════════════════╝\n`);
   });
+
+  /* ── Graceful shutdown ─────────────────────────────────── */
+  const shutdown = async (signal) => {
+    console.log(`\n[server] ${signal} received — shutting down gracefully…`);
+    encoder.stop();
+    try { await db.getPool().end(); } catch {}
+    console.log('[server] Cleanup complete. Exiting.');
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
 }
 
 boot().catch(e => { console.error('Boot failed:', e); process.exit(1); });

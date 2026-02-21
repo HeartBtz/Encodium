@@ -4,10 +4,15 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
-const SECRET = process.env.JWT_SECRET || 'encodium-change-me';
-if (!process.env.JWT_SECRET) {
-  console.warn('  \u26a0\ufe0f  JWT_SECRET not set — using insecure default. Set JWT_SECRET in .env for production!');
+let SECRET;
+if (process.env.JWT_SECRET) {
+  SECRET = process.env.JWT_SECRET;
+} else {
+  SECRET = crypto.randomBytes(64).toString('hex');
+  console.warn('\n  ⚠️  JWT_SECRET not set — generated a random ephemeral secret.');
+  console.warn('     All tokens will be invalidated on restart. Set JWT_SECRET in .env!\n');
 }
 
 function signToken(user) {

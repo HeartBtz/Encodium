@@ -15,13 +15,17 @@ require('dotenv').config({ override: true });
 const mysql = require('mysql2/promise');
 
 const DB_PASS = process.env.DB_PASS;
-if (!DB_PASS) console.warn('  \u26a0\ufe0f  DB_PASS not set — using insecure default. Set DB_PASS in .env for production!');
+if (!DB_PASS) {
+  console.error('\n  ❌  DB_PASS is not set! The database password must be configured.');
+  console.error('     Set DB_PASS in your .env file or environment variables.\n');
+  process.exit(1);
+}
 
 const pool = mysql.createPool({
   host:     process.env.DB_HOST || 'localhost',
   port:     Number(process.env.DB_PORT) || 3306,
   user:     process.env.DB_USER || 'encodium',
-  password: DB_PASS || 'encodium2026',
+  password: DB_PASS,
   database: process.env.DB_NAME || 'encodium',
   waitForConnections: true,
   connectionLimit: 10,
@@ -234,6 +238,8 @@ async function clearAll() {
   await pool.query('SET FOREIGN_KEY_CHECKS = 0');
   await pool.query('TRUNCATE TABLE encode_jobs');
   await pool.query('TRUNCATE TABLE videos');
+  await pool.query('TRUNCATE TABLE encoding_savings');
+  await pool.query('TRUNCATE TABLE custom_presets');
   await pool.query('SET FOREIGN_KEY_CHECKS = 1');
 }
 

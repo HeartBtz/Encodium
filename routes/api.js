@@ -3,12 +3,13 @@
  */
 'use strict';
 
-const express  = require('express');
-const router   = express.Router();
-const bcrypt   = require('bcryptjs');
-const path     = require('path');
-const fs       = require('fs');
-const fsp      = require('fs/promises');
+const express    = require('express');
+const router     = express.Router();
+const bcrypt     = require('bcryptjs');
+const path       = require('path');
+const fs         = require('fs');
+const fsp        = require('fs/promises');
+const rateLimit  = require('express-rate-limit');
 
 const db         = require('../db');
 const scanner    = require('../scanner');
@@ -17,11 +18,34 @@ const encoder    = require('../services/encoder');
 const logger     = require('../services/logger');
 const { signToken, verifyToken, requireAuth, requireAdmin } = require('../middleware/auth');
 
+const IS_PROD = process.env.NODE_ENV === 'production';
+/** Return a safe error message — hides internals in production */
+function safeError(e, fallback = 'Internal server error') {
+  return IS_PROD ? fallback : (e.message || fallback);
+}
+
+/* ─── Anti-brute-force limiter for login ──────────────────── */
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,                   // 10 attempts per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts, please try again later' },
+});
+
+/* ─── :id param validation ────────────────────────────────── */
+router.param('id', (req, res, next, val) => {
+  const n = Number(val);
+  if (!Number.isInteger(n) || n < 1) return res.status(400).json({ error: 'Invalid id' });
+  req.params.id = n;          // coerce once — downstream code gets a number
+  next();
+});
+
 /* ═══════════════════════════════════════════════════════════════
    AUTH
    ═══════════════════════════════════════════════════════════════ */
 
-router.post('/auth/login', async (req, res) => {
+router.post('/auth/login', loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
@@ -31,7 +55,7 @@ router.post('/auth/login', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
     await db.updateLastLogin(user.id);
     res.json({ token: signToken(user), user: { id: user.id, email: user.email, role: user.role } });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/auth/me', requireAuth, async (req, res) => {
@@ -39,7 +63,7 @@ router.get('/auth/me', requireAuth, async (req, res) => {
     const user = await db.getUserById(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ id: user.id, email: user.email, role: user.role });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -53,7 +77,7 @@ router.post('/scan', requireAuth, async (req, res) => {
     logger.info('scanner', 'Scan triggered by user');
     scanner.scanDirectory().catch(e => logger.error('scanner', `Scan error: ${e.message}`));
     res.json({ message: 'Scan started' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/scan/progress', requireAuth, (req, res) => {
@@ -74,7 +98,7 @@ router.post('/sync', requireAuth, async (req, res) => {
     logger.info('sync', 'Database sync triggered by user');
     scanner.syncDatabase().catch(e => logger.error('sync', `Sync error: ${e.message}`));
     res.json({ message: 'Sync started' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/sync/progress', requireAuth, (req, res) => {
@@ -90,7 +114,7 @@ router.post('/enrich', requireAuth, async (req, res) => {
     logger.info('enrich', 'Metadata enrichment triggered by user');
     scanner.enrichVideoMeta().catch(e => logger.error('enrich', `Enrichment error: ${e.message}`));
     res.json({ message: 'Metadata enrichment started' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/enrich/progress', requireAuth, (req, res) => {
@@ -104,7 +128,7 @@ router.post('/thumbs', requireAuth, async (req, res) => {
     logger.info('thumbs', 'Thumbnail generation triggered by user');
     scanner.generateMissingThumbs().catch(e => logger.error('thumbs', `Thumbs error: ${e.message}`));
     res.json({ message: 'Thumbnail generation started' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/thumbs/progress', requireAuth, (req, res) => {
@@ -151,15 +175,18 @@ router.get('/videos', requireAuth, async (req, res) => {
 
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const allowedSorts = ['filename', 'folder', 'size', 'duration', 'codec', 'width', 'created_at'];
-    const sortCol = allowedSorts.includes(sort) ? sort : 'filename';
+    const SORT_COLUMN_MAP = {
+      filename: 'v.filename', folder: 'v.folder', size: 'v.size',
+      duration: 'v.duration', codec: 'v.codec', width: 'v.width', created_at: 'v.created_at',
+    };
+    const sortExpr = SORT_COLUMN_MAP[sort] || SORT_COLUMN_MAP.filename;
     const sortDir = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
     const lim = Math.min(200, Math.max(1, parseInt(limit, 10)));
     const off = Math.max(0, (parseInt(page, 10) - 1)) * lim;
 
     const [rows] = await pool.query(
-      `SELECT v.* FROM videos v ${whereSQL} ORDER BY v.${sortCol} ${sortDir} LIMIT ? OFFSET ?`,
+      `SELECT v.* FROM videos v ${whereSQL} ORDER BY ${sortExpr} ${sortDir} LIMIT ? OFFSET ?`,
       [...params, lim, off]
     );
     const [[{ total }]] = await pool.query(
@@ -168,7 +195,7 @@ router.get('/videos', requireAuth, async (req, res) => {
     );
 
     res.json({ videos: rows, total, page: parseInt(page, 10), pages: Math.ceil(total / lim) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* Return ALL video ids matching current filters (no pagination) */
@@ -187,7 +214,7 @@ router.get('/videos/ids', requireAuth, async (req, res) => {
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(`SELECT v.id FROM videos v ${whereSQL}`, params);
     res.json({ ids: rows.map(r => r.id) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/videos/:id', requireAuth, async (req, res) => {
@@ -196,7 +223,7 @@ router.get('/videos/:id', requireAuth, async (req, res) => {
     const [[video]] = await pool.query('SELECT * FROM videos WHERE id=?', [req.params.id]);
     if (!video) return res.status(404).json({ error: 'Video not found' });
     res.json(video);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/videos/delete', requireAuth, async (req, res) => {
@@ -229,7 +256,7 @@ router.post('/videos/delete', requireAuth, async (req, res) => {
     }
     logger.info('api', `Deleted ${deleted} video(s) (requested: ${ids.length})`);
     res.json({ deleted, fileErrors });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/folders', requireAuth, async (req, res) => {
@@ -240,7 +267,7 @@ router.get('/folders', requireAuth, async (req, res) => {
        FROM videos GROUP BY folder ORDER BY folder`
     );
     res.json(rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/codec-stats', requireAuth, async (req, res) => {
@@ -251,7 +278,7 @@ router.get('/codec-stats', requireAuth, async (req, res) => {
        FROM videos GROUP BY codec ORDER BY count DESC`
     );
     res.json(rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/stats', requireAuth, async (req, res) => {
@@ -289,14 +316,14 @@ router.get('/stats', requireAuth, async (req, res) => {
         encode: process.env.ENCODE_DIR || path.join(__dirname, '..', 'data', 'encoded'),
       },
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
    THUMBNAILS
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/thumb/:id', async (req, res) => {
+router.get('/thumb/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${id}.jpg`);
 
@@ -366,7 +393,7 @@ router.get('/stream/:id', async (req, res) => {
       });
       fs.createReadStream(filePath).pipe(res);
     }
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -377,7 +404,7 @@ router.get('/encode/capabilities', requireAuth, async (req, res) => {
   try {
     const caps = await gpuDetect.detectAll(!!req.query.refresh);
     res.json(caps);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/encode/status', requireAuth, (req, res) => {
@@ -389,7 +416,7 @@ router.get('/encode/history', requireAuth, async (req, res) => {
     const { limit = 50, offset = 0 } = req.query;
     const data = await encoder.getHistory(parseInt(limit, 10), parseInt(offset, 10));
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/encode/enqueue', requireAuth, async (req, res) => {
@@ -421,7 +448,7 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
     const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap, force: !!force };
     const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, opts);
     res.json({ jobs: result.jobs, skipped: result.skipped });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+  } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
 router.post('/encode/cancel/:id', requireAuth, (req, res) => {
@@ -438,21 +465,21 @@ router.post('/encode/clear-finished', requireAuth, async (req, res) => {
   try {
     const n = await encoder.clearFinished();
     res.json({ cleared: n });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/encode/retry/:id', requireAuth, async (req, res) => {
   try {
     await encoder.retryJob(parseInt(req.params.id, 10));
     res.json({ ok: true });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+  } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
 router.delete('/encode/job/:id', requireAuth, async (req, res) => {
   try {
     await encoder.deleteJob(parseInt(req.params.id, 10));
     res.json({ ok: true });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+  } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
 router.post('/encode/workers', requireAuth, (req, res) => {
@@ -471,7 +498,7 @@ router.post('/videos/clear-skip', requireAuth, async (req, res) => {
     const ph = ids.map(() => '?').join(',');
     const [result] = await pool.query(`UPDATE videos SET encode_skip = 0 WHERE id IN (${ph})`, ids);
     res.json({ cleared: result.affectedRows });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* Job log endpoint — returns detailed per-job ffmpeg log */
@@ -480,7 +507,7 @@ router.get('/encode/job/:id/log', requireAuth, async (req, res) => {
     const log = await encoder.getJobLog(parseInt(req.params.id, 10));
     if (log === null) return res.status(404).json({ error: 'Log not found' });
     res.type('text/plain').send(log);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* Job priority — set priority of a pending job */
@@ -492,7 +519,7 @@ router.post('/encode/job/:id/priority', requireAuth, async (req, res) => {
     const pool = db.getPool();
     await pool.query("UPDATE encode_jobs SET priority=? WHERE id=? AND status='pending'", [pVal, id]);
     res.json({ ok: true, priority: pVal });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* Move job up/down in queue */
@@ -504,7 +531,7 @@ router.post('/encode/job/:id/move', requireAuth, async (req, res) => {
     const delta = direction === 'up' ? 1 : -1;
     await pool.query("UPDATE encode_jobs SET priority = priority + ? WHERE id=? AND status='pending'", [delta, id]);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* SSE stream for real-time updates (token via query param for EventSource) */
@@ -556,7 +583,7 @@ router.get('/stats/history', requireAuth, async (req, res) => {
       ORDER BY day ASC
     `);
     res.json(rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -568,7 +595,7 @@ router.get('/custom-presets', requireAuth, async (req, res) => {
     const pool = db.getPool();
     const [rows] = await pool.query('SELECT * FROM custom_presets ORDER BY created_at DESC');
     res.json(rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/custom-presets', requireAuth, async (req, res) => {
@@ -581,7 +608,7 @@ router.post('/custom-presets', requireAuth, async (req, res) => {
       [name, codec || 'h265', cq || 23, container || 'auto', downscale || '', tonemap ? 1 : 0, extra_args || '']
     );
     res.json({ id: result.insertId, ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.delete('/custom-presets/:id', requireAuth, async (req, res) => {
@@ -589,7 +616,7 @@ router.delete('/custom-presets/:id', requireAuth, async (req, res) => {
     const pool = db.getPool();
     await pool.query('DELETE FROM custom_presets WHERE id=?', [req.params.id]);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -602,7 +629,7 @@ router.get('/settings/schedule', requireAuth, async (req, res) => {
     const start   = await db.getSetting('schedule_start', '0');
     const end     = await db.getSetting('schedule_end', '24');
     res.json({ enabled: enabled === '1', start: parseInt(start, 10), end: parseInt(end, 10) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/settings/schedule', requireAuth, async (req, res) => {
@@ -612,7 +639,7 @@ router.post('/settings/schedule', requireAuth, async (req, res) => {
     if (start !== undefined) await db.setSetting('schedule_start', String(Math.max(0, Math.min(23, parseInt(start, 10)))));
     if (end !== undefined)   await db.setSetting('schedule_end', String(Math.max(1, Math.min(24, parseInt(end, 10)))));
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -624,16 +651,32 @@ router.get('/settings/notifications', requireAuth, async (req, res) => {
     const webhookUrl = await db.getSetting('webhook_url', '');
     const webhookEnabled = await db.getSetting('webhook_enabled', '0');
     res.json({ enabled: webhookEnabled === '1', url: webhookUrl });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/settings/notifications', requireAuth, async (req, res) => {
   try {
     const { enabled, url } = req.body;
     if (enabled !== undefined) await db.setSetting('webhook_enabled', enabled ? '1' : '0');
-    if (url !== undefined) await db.setSetting('webhook_url', String(url).trim());
+    if (url !== undefined) {
+      const trimmed = String(url).trim();
+      if (trimmed) {
+        // Validate URL format and restrict to http(s) to prevent SSRF
+        let parsed;
+        try { parsed = new URL(trimmed); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          return res.status(400).json({ error: 'Only http/https URLs allowed' });
+        }
+        // Block private/internal IPs
+        const host = parsed.hostname;
+        if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|localhost|::1|\[::1\])/i.test(host)) {
+          return res.status(400).json({ error: 'Internal/private URLs are not allowed' });
+        }
+      }
+      await db.setSetting('webhook_url', trimmed);
+    }
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -644,7 +687,7 @@ router.post('/clear', requireAdmin, async (req, res) => {
   try {
     await db.clearAll();
     res.json({ message: 'Database cleared' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 module.exports = router;
