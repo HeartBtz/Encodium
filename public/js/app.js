@@ -560,6 +560,7 @@
       const q = $('#lib-search').value;
       const folder = $('#lib-folder').value;
       const codec = $('#lib-codec').value;
+      const skip = $('#lib-skip').value;
       const sort = $('#lib-sort').value;
 
       const params = new URLSearchParams({
@@ -568,6 +569,7 @@
       if (q) params.set('q', q);
       if (folder) params.set('folder', folder);
       if (codec) params.set('codec', codec);
+      if (skip) params.set('skip', skip);
 
       const data = await api(`/videos?${params}`);
       libTotal = data.total || 0;
@@ -679,7 +681,7 @@
     clearTimeout(libSearchTimer);
     libSearchTimer = setTimeout(() => { libPage = 1; loadLibrary(); }, 350);
   });
-  ['lib-folder', 'lib-codec', 'lib-sort'].forEach(id => {
+  ['lib-folder', 'lib-codec', 'lib-skip', 'lib-sort'].forEach(id => {
     $(`#${id}`).addEventListener('change', () => { libPage = 1; loadLibrary(); });
   });
   $('#lib-order-btn').addEventListener('click', () => {
@@ -703,9 +705,11 @@
       const q = $('#lib-search').value;
       const folder = $('#lib-folder').value;
       const codec = $('#lib-codec').value;
+      const skip = $('#lib-skip').value;
       if (q) params.set('q', q);
       if (folder) params.set('folder', folder);
       if (codec) params.set('codec', codec);
+      if (skip) params.set('skip', skip);
       const data = await api(`/videos/ids?${params}`);
       if (!data.ids || !data.ids.length) { toast(t('toast.no_matching'), 'info'); return; }
       data.ids.forEach(id => libSelected.add(id));

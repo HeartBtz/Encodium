@@ -146,6 +146,7 @@ router.get('/videos', requireAuth, async (req, res) => {
       q = '',              // search query (filename / folder)
       folder = '',         // exact folder filter
       codec = '',          // video_codec filter
+      skip = '',           // encode_skip filter: 'hide' | 'only' | '' (all)
       sort = 'filename',   // sort column
       order = 'asc',       // asc | desc
       page = 1,
@@ -171,6 +172,11 @@ router.get('/videos', requireAuth, async (req, res) => {
         where.push('v.codec = ?');
         params.push(codec);
       }
+    }
+    if (skip === 'hide') {
+      where.push('(v.encode_skip IS NULL OR v.encode_skip = 0)');
+    } else if (skip === 'only') {
+      where.push('v.encode_skip = 1');
     }
 
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -202,7 +208,7 @@ router.get('/videos', requireAuth, async (req, res) => {
 router.get('/videos/ids', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
-    const { q = '', folder = '', codec = '' } = req.query;
+    const { q = '', folder = '', codec = '', skip = '' } = req.query;
     const where = [];
     const params = [];
     if (q) { where.push('(v.filename LIKE ? OR v.folder LIKE ?)'); const like = `%${q}%`; params.push(like, like); }
@@ -210,6 +216,11 @@ router.get('/videos/ids', requireAuth, async (req, res) => {
     if (codec) {
       if (codec === 'unknown') where.push("(v.codec IS NULL OR v.codec = '')");
       else { where.push('v.codec = ?'); params.push(codec); }
+    }
+    if (skip === 'hide') {
+      where.push('(v.encode_skip IS NULL OR v.encode_skip = 0)');
+    } else if (skip === 'only') {
+      where.push('v.encode_skip = 1');
     }
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(`SELECT v.id FROM videos v ${whereSQL}`, params);
