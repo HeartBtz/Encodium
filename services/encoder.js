@@ -1020,6 +1020,9 @@ async function processQueue() {
       );
       if (upd.affectedRows === 0) continue; // Another worker beat us — skip
 
+      // Broadcast immediately so the frontend shows 'encoding' without waiting for probes
+      broadcast('job_update', { id: job.id, status: 'encoding', video_id: job.video_id });
+
       // Add placeholder to active map so workerCount check works
       active.set(job.id, { proc: null, video_id: job.video_id, cancel() {} });
 

@@ -123,6 +123,7 @@
     $('#app').style.display = '';
     $('#adminUser').textContent = currentUser.email;
     connectSSE();
+    startQueuePoll();
     loadInitialLogs();
     loadDashboard();
     loadFolders();
@@ -142,6 +143,7 @@
     currentUser = null;
     localStorage.removeItem('enc_token');
     if (sse) { sse.close(); sse = null; }
+    stopQueuePoll();
     showLogin();
   }
 
@@ -786,6 +788,16 @@
       _eqDebounceTimer = null;
       loadEncodeQueue();
     }, delay);
+  }
+
+  // Periodic fallback refresh in case SSE events are missed (every 15s)
+  let _eqPollTimer = null;
+  function startQueuePoll() {
+    if (_eqPollTimer) return;
+    _eqPollTimer = setInterval(() => loadEncodeQueue(), 15000);
+  }
+  function stopQueuePoll() {
+    if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }
   }
 
   function renderEncodeStatus(status, jobs) {
