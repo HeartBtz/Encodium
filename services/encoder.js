@@ -920,9 +920,9 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
                 fps: lastProgress.fps || '',
                 size: lastProgress.total_size || '',
               });
-              // Persist progress to DB every 5 seconds so it survives page refresh
+              // Persist progress to DB every 3 seconds so it survives page refresh
               const now = Date.now();
-              if (now - lastDbProgressUpdate > 5000) {
+              if (now - lastDbProgressUpdate > 3000) {
                 lastDbProgressUpdate = now;
                 db.getPool().query('UPDATE encode_jobs SET progress=? WHERE id=?', [pct, job.id]).catch(() => {});
               }

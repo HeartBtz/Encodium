@@ -850,6 +850,8 @@
           ${showProgress ? (() => {
             const cached = liveProgress.get(j.id);
             const pct = cached ? cached.percent : (j.progress || 0);
+            // Seed liveProgress from DB so subsequent in-place updates have a baseline
+            if (!cached && pct > 0) liveProgress.set(j.id, { percent: pct, speed: '', fps: '' });
             const label = cached && cached.text ? cached.text : pct + '%';
             return `
             <div class="enc-job-progress">
@@ -913,6 +915,22 @@
     if (d.status === 'done' || d.status === 'error' || d.status === 'cancelled') {
       liveProgress.delete(d.id);
     }
+
+    // Status 'encoding' is just a confirmation — progress SSE handles the bar.
+    // Only re-render for actual list changes (new job, finished, cancelled, pending).
+    if (d.status === 'encoding') {
+      // Update the existing DOM element in-place if it exists (just flip the dot color)
+      const el = $(`.enc-job[data-jid="${d.id}"]`);
+      if (el) {
+        const dot = el.querySelector('.enc-job-status');
+        if (dot) { dot.className = 'enc-job-status dot-encoding'; }
+      } else {
+        // New job not yet in DOM — need full re-render
+        scheduleLoadEncodeQueue(300);
+      }
+      return;
+    }
+
     // Debounced refresh — avoids rapid re-renders when many SSE events fire at once
     scheduleLoadEncodeQueue(300);
     if (d.status === 'done') {
