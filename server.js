@@ -73,7 +73,11 @@ async function boot() {
   const shutdown = async (signal) => {
     if (shuttingDown) return;   // prevent double-shutdown
     shuttingDown = true;
-    console.log(`\n[server] ${signal} received — shutting down gracefully…`);
+    const mem = process.memoryUsage();
+    const rss = (mem.rss / 1e6).toFixed(0);
+    const heap = (mem.heapUsed / 1e6).toFixed(0);
+    console.log(`\n[server] ${signal} received — RSS: ${rss}MB, Heap: ${heap}MB — shutting down gracefully…`);
+    console.log(`[server] Active encoding jobs: ${encoder.getStatus().activeJobs}`);
     encoder.stop();
     // Give ffmpeg processes time to exit after SIGTERM (up to 8s)
     const deadline = Date.now() + 8000;

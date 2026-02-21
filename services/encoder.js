@@ -898,6 +898,9 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
         currentProc = proc;
         entry.proc = proc;
 
+        // Log the PID and listen for signals to diagnose external kills
+        jobLog.info(`[${label}] ffmpeg PID: ${proc.pid}`);
+
         let lastProgress = {};
         let stderrHead = '';   // first 5KB (captures init errors)
         let stderrTail = '';   // rolling last 30KB
@@ -941,7 +944,10 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
           jobLog.writeRaw(text);
         });
 
-        proc.on('close', (code) => res({ code, stderrHead, stderrTail, cancelled }));
+        proc.on('close', (code, signal) => {
+          if (signal) jobLog.warn(`[${label}] ffmpeg exited by signal: ${signal} (code=${code})`);
+          res({ code, stderrHead, stderrTail, cancelled });
+        });
         proc.on('error', (e) => {
           jobLog.error(`ffmpeg process error: ${e.message}`);
           res({ code: -1, stderrHead: `Process error: ${e.message}`, stderrTail: '', cancelled });
@@ -1297,8 +1303,9 @@ async function start() {
 function stop() {
   running = false;
   if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
+  const jobIds = [...active.keys()];
   for (const e of active.values()) e.cancel();
-  logger.info('encoder', `Encoder stopped — cancelled ${active.size} active job(s)`);
+  logger.info('encoder', `Encoder stopped — cancelled ${active.size} active job(s): [${jobIds.join(', ')}]`);
 }
 
 module.exports = {
