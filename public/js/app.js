@@ -589,7 +589,7 @@
         <div class="mb-card ${sel ? 'mb-selected' : ''}" data-id="${v.id}">
           <input type="checkbox" class="mb-card-cb" ${sel ? 'checked' : ''}>
           <div class="mb-card-thumb">
-            <img src="/api/thumb/${v.id}" onerror="this.src='/img/no-thumb.svg'" loading="lazy">
+            <img src="/api/thumb/${v.id}?token=${encodeURIComponent(token)}" onerror="this.src='/img/no-thumb.svg'" loading="lazy">
             <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="Lire">▶</button>
           </div>
           <span class="mb-card-size">${fmtSize(v.size)}</span>

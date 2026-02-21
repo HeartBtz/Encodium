@@ -323,8 +323,12 @@ router.get('/stats', requireAuth, async (req, res) => {
    THUMBNAILS
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/thumb/:id', requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+router.get('/thumb/:id', async (req, res) => {
+  // Auth via query param (for <img> tags) or Bearer header
+  const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  try { verifyToken(tkn); } catch { return res.status(401).end(); }
+
+  const id = req.params.id;
   const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${id}.jpg`);
 
   // Already exists → serve immediately
