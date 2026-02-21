@@ -417,16 +417,33 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
   const errors = [];
 
   // Check file exists and is non-empty (with retry for filesystem lag / NFS / Docker volumes)
+  const MAX_STAT_ATTEMPTS = 5;
+  const STAT_RETRY_DELAY = 2000;
   let st = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= MAX_STAT_ATTEMPTS; attempt++) {
     try {
       st = await fsp.stat(tmpFile);
       break;
     } catch (statErr) {
-      if (attempt < 3) {
-        jobLog.warn(`Output file not found (attempt ${attempt}/3, ${statErr.code || statErr.message}), retrying in 2s…`);
-        await new Promise(r => setTimeout(r, 2000));
+      if (attempt < MAX_STAT_ATTEMPTS) {
+        jobLog.warn(`Output file not found (attempt ${attempt}/${MAX_STAT_ATTEMPTS}, ${statErr.code || statErr.message}), retrying in ${STAT_RETRY_DELAY / 1000}s…`);
+        await new Promise(r => setTimeout(r, STAT_RETRY_DELAY));
       } else {
+        // Diagnostic: list directory contents to see what ffmpeg actually wrote
+        const dir = path.dirname(tmpFile);
+        const base = path.basename(tmpFile);
+        try {
+          const files = await fsp.readdir(dir);
+          const nearby = files.filter(f => f.includes('.tmp.') || f.includes(path.basename(tmpFile).split('.')[0]));
+          jobLog.error(`ENOENT diagnostic — expected: ${base}`);
+          jobLog.error(`ENOENT diagnostic — dir ${dir} contains ${files.length} file(s), nearby matches: ${nearby.length > 0 ? nearby.join(', ') : '(none)'}`);
+          // Check disk space
+          const { execSync } = require('child_process');
+          const df = execSync(`df -h "${dir}" 2>/dev/null || true`).toString().trim();
+          jobLog.error(`ENOENT diagnostic — disk space:\n${df}`);
+        } catch (diagErr) {
+          jobLog.error(`ENOENT diagnostic failed: ${diagErr.message}`);
+        }
         errors.push(`Output file does not exist (${statErr.code || statErr.message}): ${tmpFile}`);
         return errors;
       }
@@ -685,7 +702,7 @@ async function processJob(job) {
       const errorLines = allStderr.split('\n').filter(l =>
         /error|cannot|invalid|failed|not found|no such|denied|killed|abort|segfault|signal/i.test(l)
       ).slice(0, 20).join('\n');
-      const errMsg = `ffmpeg exited with code ${result.code}.\n${errorLines || result.stderrTail.slice(-2000)}`;
+      const errMsg = `ffmpeg exited with code ${result.code}${result.code === null ? ' (killed by signal)' : ''}.\n${errorLines || result.stderrTail.slice(-2000)}`;
       jobLog.error(errMsg);
       await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
         [errMsg.slice(0, 5000), job.id]);
@@ -693,6 +710,14 @@ async function processJob(job) {
       try { await fsp.unlink(tmpFile); } catch {}
       logger.error('encoder', `Job #${job.id} failed: ffmpeg exit code ${result.code}`);
       return;
+    }
+
+    // ── Quick existence check right after ffmpeg exit ──
+    try {
+      await fsp.access(tmpFile);
+      jobLog.info(`Post-ffmpeg check: output file exists at ${tmpFile}`);
+    } catch (accessErr) {
+      jobLog.error(`Post-ffmpeg check: output file MISSING immediately after ffmpeg exit 0 — ${accessErr.code}: ${tmpFile}`);
     }
 
     // ── Validate output ──
@@ -1040,6 +1065,28 @@ async function processQueue() {
 /* ─── Job recovery on startup ────────────────────────────────── */
 
 async function recoverStalledJobs() {
+  // Kill orphan ffmpeg processes from previous instance (PM2 restart, crash, etc.)
+  try {
+    const { execSync } = require('child_process');
+    const pids = execSync("pgrep -f 'ffmpeg.*\\.tmp\\.' 2>/dev/null || true").toString().trim();
+    if (pids) {
+      for (const pid of pids.split('\n').filter(Boolean)) {
+        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch {}
+      }
+      logger.warn('encoder', `Killed ${pids.split('\n').filter(Boolean).length} orphan ffmpeg process(es) from previous instance`);
+    }
+  } catch {}
+
+  // Clean up stale .tmp. files in ENCODE_DIR (partial encodes from crashed jobs)
+  try {
+    const files = await fsp.readdir(ENCODE_DIR).catch(() => []);
+    const staleTemps = files.filter(f => /\.tmp\.\d+\./i.test(f));
+    for (const f of staleTemps) {
+      try { await fsp.unlink(path.join(ENCODE_DIR, f)); } catch {}
+    }
+    if (staleTemps.length) logger.info('encoder', `Cleaned up ${staleTemps.length} stale temp file(s)`);
+  } catch {}
+
   try {
     const pool = db.getPool();
     const [stalled] = await pool.query("SELECT id FROM encode_jobs WHERE status='encoding'");
