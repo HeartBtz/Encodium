@@ -222,6 +222,7 @@ i18n.registerLang('de', {
   'browse.label_placeholder': 'Bezeichnung (optional)',
   'toast.source_added': 'Quellordner hinzugefügt',
   'toast.source_removed': 'Quellordner entfernt',
+  'toast.source_duplicate': 'Dieses Verzeichnis ist bereits als Quelle hinzugefügt',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Automatischer Scan',

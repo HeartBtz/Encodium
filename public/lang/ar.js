@@ -222,6 +222,7 @@ i18n.registerLang('ar', {
   'browse.label_placeholder': 'تسمية (اختياري)',
   'toast.source_added': 'تمت إضافة مجلد المصدر',
   'toast.source_removed': 'تمت إزالة مجلد المصدر',
+  'toast.source_duplicate': 'هذا المجلد مضاف بالفعل كمصدر',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'الفحص التلقائي',

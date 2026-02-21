@@ -222,6 +222,7 @@ i18n.registerLang('pt', {
   'browse.label_placeholder': 'Rótulo (opcional)',
   'toast.source_added': 'Pasta fonte adicionada',
   'toast.source_removed': 'Pasta fonte removida',
+  'toast.source_duplicate': 'Este diretório já foi adicionado como fonte',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Verificação automática',

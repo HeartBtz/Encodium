@@ -200,6 +200,7 @@ i18n.registerLang('nl', {
   'browse.label_placeholder': 'Label (optioneel)',
   'toast.source_added': 'Bronmap toegevoegd',
   'toast.source_removed': 'Bronmap verwijderd',
+  'toast.source_duplicate': 'Deze map is al toegevoegd als bron',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Automatisch scannen',

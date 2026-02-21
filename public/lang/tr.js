@@ -200,6 +200,7 @@ i18n.registerLang('tr', {
   'browse.label_placeholder': 'Etiket (isteğe bağlı)',
   'toast.source_added': 'Kaynak klasör eklendi',
   'toast.source_removed': 'Kaynak klasör kaldırıldı',
+  'toast.source_duplicate': 'Bu dizin zaten kaynak olarak eklenmiş',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Otomatik tarama',

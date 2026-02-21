@@ -222,6 +222,7 @@ i18n.registerLang('ru', {
   'browse.label_placeholder': 'Метка (необязательно)',
   'toast.source_added': 'Исходная папка добавлена',
   'toast.source_removed': 'Исходная папка удалена',
+  'toast.source_duplicate': 'Этот каталог уже добавлен как источник',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Автоматическое сканирование',

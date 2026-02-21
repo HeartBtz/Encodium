@@ -738,7 +738,15 @@ router.post('/settings/sources', requireAuth, async (req, res) => {
       const stat = await fsp.stat(resolved);
       if (!stat.isDirectory()) return res.status(400).json({ error: 'Path is not a directory' });
     } catch { return res.status(400).json({ error: 'Path does not exist or is not accessible' }); }
-    const source = await scanner.addSource(resolved, (label || '').trim() || path.basename(resolved));
+    let source;
+    try {
+      source = await scanner.addSource(resolved, (label || '').trim() || path.basename(resolved));
+    } catch (addErr) {
+      if (addErr.code === 'ER_DUP_ENTRY' || (addErr.message && addErr.message.includes('Duplicate'))) {
+        return res.status(409).json({ error: 'This directory is already added as a source' });
+      }
+      throw addErr;
+    }
     res.json(source);
     // Auto-scan the new source in background (scan + enrich + thumbs)
     const watcher = require('../services/watcher');

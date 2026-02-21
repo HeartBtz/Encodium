@@ -222,6 +222,7 @@ i18n.registerLang('es', {
   'browse.label_placeholder': 'Etiqueta (opcional)',
   'toast.source_added': 'Carpeta fuente añadida',
   'toast.source_removed': 'Carpeta fuente eliminada',
+  'toast.source_duplicate': 'Este directorio ya está añadido como fuente',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Escaneo automático',

@@ -222,6 +222,7 @@ i18n.registerLang('ko', {
   'browse.label_placeholder': '라벨 (선택사항)',
   'toast.source_added': '소스 폴더가 추가되었습니다',
   'toast.source_removed': '소스 폴더가 제거되었습니다',
+  'toast.source_duplicate': '이 디렉토리는 이미 소스로 추가되어 있습니다',
 
   // ── Auto-scan ──
   'settings.autoscan_title': '자동 스캔',

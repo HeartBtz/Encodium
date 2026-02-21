@@ -222,6 +222,7 @@ i18n.registerLang('ja', {
   'browse.label_placeholder': 'ラベル（任意）',
   'toast.source_added': 'ソースフォルダを追加しました',
   'toast.source_removed': 'ソースフォルダを削除しました',
+  'toast.source_duplicate': 'このディレクトリは既にソースとして追加されています',
 
   // ── Auto-scan ──
   'settings.autoscan_title': '自動スキャン',

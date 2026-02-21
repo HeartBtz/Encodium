@@ -245,6 +245,7 @@ i18n.registerLang('fr', {
   'browse.label_placeholder': 'Label (optionnel)',
   'toast.source_added': 'Dossier source ajouté',
   'toast.source_removed': 'Dossier source retiré',
+  'toast.source_duplicate': 'Ce répertoire est déjà ajouté comme source',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Scan automatique',

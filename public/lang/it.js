@@ -222,6 +222,7 @@ i18n.registerLang('it', {
   'browse.label_placeholder': 'Etichetta (opzionale)',
   'toast.source_added': 'Cartella sorgente aggiunta',
   'toast.source_removed': 'Cartella sorgente rimossa',
+  'toast.source_duplicate': 'Questa directory è già aggiunta come sorgente',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Scansione automatica',

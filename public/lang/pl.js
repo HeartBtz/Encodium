@@ -200,6 +200,7 @@ i18n.registerLang('pl', {
   'browse.label_placeholder': 'Etykieta (opcjonalne)',
   'toast.source_added': 'Folder źródłowy dodany',
   'toast.source_removed': 'Folder źródłowy usunięty',
+  'toast.source_duplicate': 'Ten katalog jest już dodany jako źródło',
 
   // ── Auto-scan ──
   'settings.autoscan_title': 'Automatyczne skanowanie',

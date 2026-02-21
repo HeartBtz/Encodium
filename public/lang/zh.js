@@ -222,6 +222,7 @@ i18n.registerLang('zh', {
   'browse.label_placeholder': '标签（可选）',
   'toast.source_added': '源文件夹已添加',
   'toast.source_removed': '源文件夹已移除',
+  'toast.source_duplicate': '此目录已作为来源添加',
 
   // ── Auto-scan ──
   'settings.autoscan_title': '自动扫描',

@@ -1372,7 +1372,10 @@
         loadDashboard();
         // Auto-pipeline runs server-side; poll scan progress
         setTimeout(() => { checkScanOnLoad(); }, 1500);
-      } catch (e) { toast(e.message, 'error'); }
+      } catch (e) {
+        const msg = (e.message || '').includes('already') ? t('toast.source_duplicate') : e.message;
+        toast(msg, 'error');
+      }
     });
   });
 
