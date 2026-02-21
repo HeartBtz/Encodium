@@ -345,19 +345,25 @@ router.get('/thumb/:id', async (req, res) => {
   // Already exists → serve immediately
   if (fs.existsSync(thumbPath)) return res.sendFile(thumbPath);
 
-  // Generate on the fly
+  // Thumb missing → kick off background generation and return 202 immediately.
+  // This avoids blocking the HTTP connection (and the browser's per-origin
+  // connection pool) while ffmpeg runs.  The frontend will retry after a delay.
   try {
     const pool = db.getPool();
     const [[video]] = await pool.query('SELECT file_path FROM videos WHERE id=?', [id]);
     if (!video || !video.file_path) return res.status(404).end();
 
-    const result = await scanner.generateThumb(video.file_path, id);
-    if (result && fs.existsSync(thumbPath)) {
-      // Update DB so we know it exists
-      await pool.query('UPDATE videos SET thumb_path=? WHERE id=?', [thumbPath, id]);
-      return res.sendFile(thumbPath);
-    }
-    res.status(404).end();
+    // Fire-and-forget: generate in background, update DB when done
+    scanner.generateThumb(video.file_path, id).then(async (result) => {
+      if (result) {
+        try {
+          await pool.query('UPDATE videos SET thumb_path=? WHERE id=?', [thumbPath, id]);
+        } catch { /* non-critical */ }
+      }
+    }).catch(() => {});
+
+    // Tell the client "accepted, come back later"
+    return res.status(202).json({ generating: true });
   } catch {
     res.status(404).end();
   }
