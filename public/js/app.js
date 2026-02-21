@@ -183,6 +183,9 @@
     sse.addEventListener('log', e => {
       try { addLogEntry(JSON.parse(e.data)); } catch {}
     });
+    sse.addEventListener('pipeline_status', e => {
+      try { handlePipelineStatus(JSON.parse(e.data)); } catch {}
+    });
     sse.onerror = () => {
       sse.close(); sse = null;
       sseRetries++;
@@ -190,6 +193,36 @@
         setTimeout(() => connectSSE(), Math.min(sseRetries * 3000, 30000));
       }
     };
+  }
+
+  /* ── Pipeline SSE — auto-refresh on background scan/enrich/thumbs ── */
+  let _pipelineRefreshTimer = null;
+
+  function handlePipelineStatus(data) {
+    const { step, status } = data;
+    // When a step finishes, schedule a debounced refresh so we don't flood
+    if (status === 'done') {
+      // Each step completion refreshes dashboard stats
+      debouncedPipelineRefresh();
+      // Library data changes after scan/sync/enrich steps
+      if (step === 'scan' || step === 'sync' || step === 'enrich' || step === 'thumbs' || step === 'complete') {
+        debouncedPipelineRefresh();
+      }
+    }
+  }
+
+  function debouncedPipelineRefresh() {
+    if (_pipelineRefreshTimer) clearTimeout(_pipelineRefreshTimer);
+    _pipelineRefreshTimer = setTimeout(() => {
+      _pipelineRefreshTimer = null;
+      loadDashboard();
+      loadFolders();
+      // Only reload library if we're on the library tab to avoid unnecessary calls
+      const activeTab = localStorage.getItem('enc_activeTab') || 'dashboard';
+      if (activeTab === 'library') {
+        loadLibrary();
+      }
+    }, 1500);
   }
 
   /* ── Tab switching ────────────────────────────────────── */

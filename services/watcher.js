@@ -13,6 +13,12 @@ const fs     = require('fs');
 const path   = require('path');
 const logger = require('./logger');
 
+let encoder;
+function getBroadcast() {
+  if (!encoder) encoder = require('./encoder');
+  return encoder.broadcast;
+}
+
 let scanner;  // lazy-loaded to avoid circular deps
 function getScanner() {
   if (!scanner) scanner = require('../scanner');
@@ -46,19 +52,28 @@ async function runFullPipeline(reason = 'auto') {
     return;
   }
   pipelineRunning = true;
+  const broadcast = getBroadcast();
   logger.info('watcher', `Auto-pipeline started — trigger: ${reason}`);
+  broadcast('pipeline_status', { step: 'scan', status: 'running', reason });
   try {
     await sc.scanDirectory();
+    broadcast('pipeline_status', { step: 'scan', status: 'done', reason });
     // Enrich metadata if not already running
     if (!sc.getEnrichProgress().running) {
+      broadcast('pipeline_status', { step: 'enrich', status: 'running', reason });
       await sc.enrichVideoMeta();
+      broadcast('pipeline_status', { step: 'enrich', status: 'done', reason });
     }
     // Generate thumbnails if not already running
     if (!sc.getThumbsProgress().running) {
+      broadcast('pipeline_status', { step: 'thumbs', status: 'running', reason });
       await sc.generateMissingThumbs();
+      broadcast('pipeline_status', { step: 'thumbs', status: 'done', reason });
     }
+    broadcast('pipeline_status', { step: 'complete', status: 'done', reason });
     logger.success('watcher', `Auto-pipeline complete — trigger: ${reason}`);
   } catch (e) {
+    broadcast('pipeline_status', { step: 'error', status: 'error', error: e.message, reason });
     logger.error('watcher', `Auto-pipeline error: ${e.message}`);
   } finally {
     pipelineRunning = false;
@@ -76,18 +91,27 @@ async function runAutoSync(reason = 'auto') {
     return;
   }
   pipelineRunning = true;
+  const broadcast = getBroadcast();
   logger.info('watcher', `Auto-sync started — trigger: ${reason}`);
+  broadcast('pipeline_status', { step: 'sync', status: 'running', reason });
   try {
     await sc.syncDatabase();
+    broadcast('pipeline_status', { step: 'sync', status: 'done', reason });
     // Also enrich + thumbs for any newly added files
     if (!sc.getEnrichProgress().running) {
+      broadcast('pipeline_status', { step: 'enrich', status: 'running', reason });
       await sc.enrichVideoMeta();
+      broadcast('pipeline_status', { step: 'enrich', status: 'done', reason });
     }
     if (!sc.getThumbsProgress().running) {
+      broadcast('pipeline_status', { step: 'thumbs', status: 'running', reason });
       await sc.generateMissingThumbs();
+      broadcast('pipeline_status', { step: 'thumbs', status: 'done', reason });
     }
+    broadcast('pipeline_status', { step: 'complete', status: 'done', reason });
     logger.success('watcher', `Auto-sync complete — trigger: ${reason}`);
   } catch (e) {
+    broadcast('pipeline_status', { step: 'error', status: 'error', error: e.message, reason });
     logger.error('watcher', `Auto-sync error: ${e.message}`);
   } finally {
     pipelineRunning = false;
