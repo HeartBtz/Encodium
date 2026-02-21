@@ -499,10 +499,10 @@ setup_pm2() {
     sleep 1
   fi
 
-  # Only generate ecosystem.config.js if it doesn't already exist.
-  # The repo ships a portable version using __dirname — don't overwrite it.
+  # ecosystem.config.js is shipped in the repo (updated via git pull).
+  # Only generate a fallback if the file is somehow missing.
   if [[ ! -f "$SCRIPT_DIR/ecosystem.config.js" ]]; then
-    log "Generating ecosystem.config.js…"
+    warn "ecosystem.config.js missing — generating default"
     cat > "$SCRIPT_DIR/ecosystem.config.js" <<'EOF'
 const path = require('path');
 const BASE = path.resolve(__dirname);
@@ -529,10 +529,10 @@ module.exports = {
 };
 EOF
   else
-    ok "ecosystem.config.js already exists — keeping current version"
+    ok "ecosystem.config.js present (managed by git)"
   fi
 
-  # Start with PM2
+  # Start with PM2 (always uses the file from repo / git pull)
   pm2 start "$SCRIPT_DIR/ecosystem.config.js"
 
   # Wait a moment for the app to bind the port
