@@ -158,7 +158,33 @@ async function addSource(dirPath, label) {
 
 async function removeSource(id) {
   const pool = getPool();
+  // Look up the path before deleting so we can clean up videos
+  const [rows] = await pool.query('SELECT path FROM media_sources WHERE id = ?', [id]);
   await pool.query('DELETE FROM media_sources WHERE id = ?', [id]);
+
+  // Remove all videos whose file_path starts with this source directory
+  if (rows.length) {
+    const srcPath = rows[0].path.replace(/\/+$/, '') + '/';
+    const [vids] = await pool.query(
+      'SELECT id FROM videos WHERE file_path LIKE ?',
+      [srcPath + '%']
+    );
+    if (vids.length) {
+      const ids = vids.map(v => v.id);
+      // Delete thumbnails
+      for (const vid of vids) {
+        const tp = path.join(THUMB_DIR, `v_${vid.id}.jpg`);
+        try { await fs.promises.unlink(tp); } catch {}
+      }
+      // Delete DB rows in batches
+      for (let i = 0; i < ids.length; i += 500) {
+        const batch = ids.slice(i, i + 500);
+        const ph = batch.map(() => '?').join(',');
+        await pool.query(`DELETE FROM videos WHERE id IN (${ph})`, batch);
+      }
+      logger.info('sources', `Removed source "${rows[0].path}" — purged ${vids.length} video(s) from database`);
+    }
+  }
 }
 
 /** Get all enabled source paths (convenience) */
