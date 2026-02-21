@@ -695,6 +695,27 @@ router.post('/settings/notifications', requireAuth, async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
+   SETTINGS — Auto-scan
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/settings/autoscan', requireAuth, async (req, res) => {
+  try {
+    const watcher = require('../services/watcher');
+    const interval = await db.getSetting('autoscan_interval', '0');
+    res.json({ interval: parseInt(interval, 10), options: Object.keys(watcher.INTERVAL_OPTIONS).map(Number) });
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+});
+
+router.post('/settings/autoscan', requireAuth, async (req, res) => {
+  try {
+    const watcher = require('../services/watcher');
+    const { interval } = req.body;
+    await watcher.setAutoScanInterval(interval);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
    SETTINGS — Media Sources (multi-directory)
    ═══════════════════════════════════════════════════════════════ */
 
@@ -719,6 +740,10 @@ router.post('/settings/sources', requireAuth, async (req, res) => {
     } catch { return res.status(400).json({ error: 'Path does not exist or is not accessible' }); }
     const source = await scanner.addSource(resolved, (label || '').trim() || path.basename(resolved));
     res.json(source);
+    // Auto-scan the new source in background (scan + enrich + thumbs)
+    const watcher = require('../services/watcher');
+    watcher.refreshWatchers().catch(() => {});
+    watcher.runFullPipeline('source added').catch(() => {});
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
@@ -728,6 +753,9 @@ router.delete('/settings/sources/:id', requireAuth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     await scanner.removeSource(id);
+    // Refresh watchers (stop watching removed source)
+    const watcher = require('../services/watcher');
+    watcher.refreshWatchers().catch(() => {});
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });

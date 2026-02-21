@@ -245,4 +245,17 @@ i18n.registerLang('en', {
   'browse.label_placeholder': 'Label (optional)',
   'toast.source_added': 'Source folder added',
   'toast.source_removed': 'Source folder removed',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Automatic scan',
+  'settings.autoscan_desc': 'Source folders are monitored in real time. You can also enable periodic scanning.',
+  'settings.autoscan_interval': 'Periodic scan',
+  'settings.autoscan_off': 'Disabled',
+  'settings.autoscan_5': 'Every 5 min',
+  'settings.autoscan_15': 'Every 15 min',
+  'settings.autoscan_30': 'Every 30 min',
+  'settings.autoscan_60': 'Every hour',
+  'settings.autoscan_360': 'Every 6 hours',
+  'settings.autoscan_realtime': '⚡ Real-time monitoring active',
+  'toast.autoscan_saved': 'Auto-scan settings saved',
 });

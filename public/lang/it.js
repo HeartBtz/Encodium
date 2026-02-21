@@ -222,4 +222,17 @@ i18n.registerLang('it', {
   'browse.label_placeholder': 'Etichetta (opzionale)',
   'toast.source_added': 'Cartella sorgente aggiunta',
   'toast.source_removed': 'Cartella sorgente rimossa',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Scansione automatica',
+  'settings.autoscan_desc': 'Le cartelle sorgente vengono monitorate in tempo reale. Puoi anche attivare la scansione periodica.',
+  'settings.autoscan_interval': 'Scansione periodica',
+  'settings.autoscan_off': 'Disattivato',
+  'settings.autoscan_5': 'Ogni 5 min',
+  'settings.autoscan_15': 'Ogni 15 min',
+  'settings.autoscan_30': 'Ogni 30 min',
+  'settings.autoscan_60': 'Ogni ora',
+  'settings.autoscan_360': 'Ogni 6 ore',
+  'settings.autoscan_realtime': '⚡ Monitoraggio in tempo reale attivo',
+  'toast.autoscan_saved': 'Scansione automatica salvata',
 });

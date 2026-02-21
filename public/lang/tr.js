@@ -200,4 +200,17 @@ i18n.registerLang('tr', {
   'browse.label_placeholder': 'Etiket (isteğe bağlı)',
   'toast.source_added': 'Kaynak klasör eklendi',
   'toast.source_removed': 'Kaynak klasör kaldırıldı',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Otomatik tarama',
+  'settings.autoscan_desc': 'Kaynak klasörler gerçek zamanlı izlenir. Periyodik taramayı da etkinleştirebilirsiniz.',
+  'settings.autoscan_interval': 'Periyodik tarama',
+  'settings.autoscan_off': 'Devre dışı',
+  'settings.autoscan_5': 'Her 5 dk',
+  'settings.autoscan_15': 'Her 15 dk',
+  'settings.autoscan_30': 'Her 30 dk',
+  'settings.autoscan_60': 'Her saat',
+  'settings.autoscan_360': 'Her 6 saat',
+  'settings.autoscan_realtime': '⚡ Gerçek zamanlı izleme aktif',
+  'toast.autoscan_saved': 'Otomatik tarama kaydedildi',
 });

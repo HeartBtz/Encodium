@@ -1204,6 +1204,11 @@
       $('#webhook-enabled').checked = notif.enabled;
       $('#webhook-url').value = notif.url || '';
     } catch {}
+    // Auto-scan interval
+    try {
+      const as = await api('/settings/autoscan');
+      $('#autoscan-interval').value = String(as.interval);
+    } catch {}
     // Media sources
     loadSources();
     // Custom presets
@@ -1212,6 +1217,16 @@
 
   $('#schedule-enabled').addEventListener('change', () => {
     $('#schedule-fields').style.display = $('#schedule-enabled').checked ? 'flex' : 'none';
+  });
+
+  $('#btn-save-autoscan').addEventListener('click', async () => {
+    try {
+      await api('/settings/autoscan', {
+        method: 'POST',
+        body: JSON.stringify({ interval: parseInt($('#autoscan-interval').value, 10) }),
+      });
+      toast(t('toast.autoscan_saved'), 'success');
+    } catch (e) { toast(e.message, 'error'); }
   });
 
   $('#btn-save-schedule').addEventListener('click', async () => {
@@ -1355,6 +1370,8 @@
         toast(t('toast.source_added'), 'success');
         loadSources();
         loadDashboard();
+        // Auto-pipeline runs server-side; poll scan progress
+        setTimeout(() => { checkScanOnLoad(); }, 1500);
       } catch (e) { toast(e.message, 'error'); }
     });
   });

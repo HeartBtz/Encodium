@@ -222,4 +222,17 @@ i18n.registerLang('zh', {
   'browse.label_placeholder': '标签（可选）',
   'toast.source_added': '源文件夹已添加',
   'toast.source_removed': '源文件夹已移除',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': '自动扫描',
+  'settings.autoscan_desc': '源文件夹被实时监控。您也可以启用定期扫描。',
+  'settings.autoscan_interval': '定期扫描',
+  'settings.autoscan_off': '已禁用',
+  'settings.autoscan_5': '每5分钟',
+  'settings.autoscan_15': '每15分钟',
+  'settings.autoscan_30': '每30分钟',
+  'settings.autoscan_60': '每小时',
+  'settings.autoscan_360': '每6小时',
+  'settings.autoscan_realtime': '⚡ 实时监控已启用',
+  'toast.autoscan_saved': '自动扫描设置已保存',
 });

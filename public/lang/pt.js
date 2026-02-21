@@ -222,4 +222,17 @@ i18n.registerLang('pt', {
   'browse.label_placeholder': 'Rótulo (opcional)',
   'toast.source_added': 'Pasta fonte adicionada',
   'toast.source_removed': 'Pasta fonte removida',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Verificação automática',
+  'settings.autoscan_desc': 'As pastas fonte são monitoradas em tempo real. Você também pode ativar a verificação periódica.',
+  'settings.autoscan_interval': 'Verificação periódica',
+  'settings.autoscan_off': 'Desativado',
+  'settings.autoscan_5': 'A cada 5 min',
+  'settings.autoscan_15': 'A cada 15 min',
+  'settings.autoscan_30': 'A cada 30 min',
+  'settings.autoscan_60': 'A cada hora',
+  'settings.autoscan_360': 'A cada 6 horas',
+  'settings.autoscan_realtime': '⚡ Monitoramento em tempo real ativo',
+  'toast.autoscan_saved': 'Verificação automática salva',
 });

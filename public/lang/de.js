@@ -222,4 +222,17 @@ i18n.registerLang('de', {
   'browse.label_placeholder': 'Bezeichnung (optional)',
   'toast.source_added': 'Quellordner hinzugefügt',
   'toast.source_removed': 'Quellordner entfernt',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Automatischer Scan',
+  'settings.autoscan_desc': 'Quellordner werden in Echtzeit überwacht. Sie können auch regelmäßige Scans aktivieren.',
+  'settings.autoscan_interval': 'Regelmäßiger Scan',
+  'settings.autoscan_off': 'Deaktiviert',
+  'settings.autoscan_5': 'Alle 5 Min.',
+  'settings.autoscan_15': 'Alle 15 Min.',
+  'settings.autoscan_30': 'Alle 30 Min.',
+  'settings.autoscan_60': 'Jede Stunde',
+  'settings.autoscan_360': 'Alle 6 Stunden',
+  'settings.autoscan_realtime': '⚡ Echtzeit-Überwachung aktiv',
+  'toast.autoscan_saved': 'Auto-Scan gespeichert',
 });

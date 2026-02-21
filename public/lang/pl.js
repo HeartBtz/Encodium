@@ -200,4 +200,17 @@ i18n.registerLang('pl', {
   'browse.label_placeholder': 'Etykieta (opcjonalne)',
   'toast.source_added': 'Folder źródłowy dodany',
   'toast.source_removed': 'Folder źródłowy usunięty',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Automatyczne skanowanie',
+  'settings.autoscan_desc': 'Foldery źródłowe są monitorowane w czasie rzeczywistym. Możesz też włączyć skanowanie okresowe.',
+  'settings.autoscan_interval': 'Skanowanie okresowe',
+  'settings.autoscan_off': 'Wyłączone',
+  'settings.autoscan_5': 'Co 5 min',
+  'settings.autoscan_15': 'Co 15 min',
+  'settings.autoscan_30': 'Co 30 min',
+  'settings.autoscan_60': 'Co godzinę',
+  'settings.autoscan_360': 'Co 6 godzin',
+  'settings.autoscan_realtime': '⚡ Monitoring w czasie rzeczywistym aktywny',
+  'toast.autoscan_saved': 'Automatyczne skanowanie zapisane',
 });

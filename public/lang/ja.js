@@ -222,4 +222,17 @@ i18n.registerLang('ja', {
   'browse.label_placeholder': 'ラベル（任意）',
   'toast.source_added': 'ソースフォルダを追加しました',
   'toast.source_removed': 'ソースフォルダを削除しました',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': '自動スキャン',
+  'settings.autoscan_desc': 'ソースフォルダはリアルタイムで監視されます。定期スキャンも有効にできます。',
+  'settings.autoscan_interval': '定期スキャン',
+  'settings.autoscan_off': '無効',
+  'settings.autoscan_5': '5分ごと',
+  'settings.autoscan_15': '15分ごと',
+  'settings.autoscan_30': '30分ごと',
+  'settings.autoscan_60': '1時間ごと',
+  'settings.autoscan_360': '6時間ごと',
+  'settings.autoscan_realtime': '⚡ リアルタイム監視が有効',
+  'toast.autoscan_saved': '自動スキャン設定を保存しました',
 });

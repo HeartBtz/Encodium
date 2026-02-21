@@ -222,4 +222,17 @@ i18n.registerLang('ar', {
   'browse.label_placeholder': 'تسمية (اختياري)',
   'toast.source_added': 'تمت إضافة مجلد المصدر',
   'toast.source_removed': 'تمت إزالة مجلد المصدر',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'الفحص التلقائي',
+  'settings.autoscan_desc': 'تتم مراقبة مجلدات المصدر في الوقت الفعلي. يمكنك أيضًا تفعيل الفحص الدوري.',
+  'settings.autoscan_interval': 'الفحص الدوري',
+  'settings.autoscan_off': 'معطل',
+  'settings.autoscan_5': 'كل 5 دقائق',
+  'settings.autoscan_15': 'كل 15 دقيقة',
+  'settings.autoscan_30': 'كل 30 دقيقة',
+  'settings.autoscan_60': 'كل ساعة',
+  'settings.autoscan_360': 'كل 6 ساعات',
+  'settings.autoscan_realtime': '⚡ المراقبة في الوقت الفعلي نشطة',
+  'toast.autoscan_saved': 'تم حفظ إعدادات الفحص التلقائي',
 });

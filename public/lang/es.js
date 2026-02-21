@@ -222,4 +222,17 @@ i18n.registerLang('es', {
   'browse.label_placeholder': 'Etiqueta (opcional)',
   'toast.source_added': 'Carpeta fuente añadida',
   'toast.source_removed': 'Carpeta fuente eliminada',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Escaneo automático',
+  'settings.autoscan_desc': 'Las carpetas fuente se monitorizan en tiempo real. También puedes activar el escaneo periódico.',
+  'settings.autoscan_interval': 'Escaneo periódico',
+  'settings.autoscan_off': 'Desactivado',
+  'settings.autoscan_5': 'Cada 5 min',
+  'settings.autoscan_15': 'Cada 15 min',
+  'settings.autoscan_30': 'Cada 30 min',
+  'settings.autoscan_60': 'Cada hora',
+  'settings.autoscan_360': 'Cada 6 horas',
+  'settings.autoscan_realtime': '⚡ Monitorización en tiempo real activa',
+  'toast.autoscan_saved': 'Escaneo automático guardado',
 });

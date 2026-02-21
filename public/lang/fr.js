@@ -245,4 +245,17 @@ i18n.registerLang('fr', {
   'browse.label_placeholder': 'Label (optionnel)',
   'toast.source_added': 'Dossier source ajouté',
   'toast.source_removed': 'Dossier source retiré',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Scan automatique',
+  'settings.autoscan_desc': 'Les dossiers sources sont surveillés en temps réel. Vous pouvez aussi activer un scan périodique.',
+  'settings.autoscan_interval': 'Scan périodique',
+  'settings.autoscan_off': 'Désactivé',
+  'settings.autoscan_5': 'Toutes les 5 min',
+  'settings.autoscan_15': 'Toutes les 15 min',
+  'settings.autoscan_30': 'Toutes les 30 min',
+  'settings.autoscan_60': 'Toutes les heures',
+  'settings.autoscan_360': 'Toutes les 6 heures',
+  'settings.autoscan_realtime': '⚡ Surveillance temps réel active',
+  'toast.autoscan_saved': 'Scan automatique enregistré',
 });

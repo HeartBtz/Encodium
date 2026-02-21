@@ -13,6 +13,7 @@ const path       = require('path');
 
 const db      = require('./db');
 const encoder = require('./services/encoder');
+const watcher = require('./services/watcher');
 const api     = require('./routes/api');
 const { version } = require('./package.json');
 
@@ -61,6 +62,9 @@ async function boot() {
   // Start encode queue processor (recovers stalled jobs from DB)
   await encoder.start();
 
+  // Start file watcher & auto-sync service
+  await watcher.start();
+
   app.listen(PORT, () => {
     console.log(`\n  ╔══════════════════════════════════════╗`);
     console.log(`  ║   Encodium v${version.padEnd(24)}║`);
@@ -78,6 +82,7 @@ async function boot() {
     const heap = (mem.heapUsed / 1e6).toFixed(0);
     console.log(`\n[server] ${signal} received — RSS: ${rss}MB, Heap: ${heap}MB — shutting down gracefully…`);
     console.log(`[server] Active encoding jobs: ${encoder.getStatus().activeJobs}`);
+    watcher.stop();
     encoder.stop();
     // Give ffmpeg processes time to exit after SIGTERM (up to 8s)
     const deadline = Date.now() + 8000;

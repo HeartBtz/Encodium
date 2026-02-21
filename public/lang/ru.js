@@ -222,4 +222,17 @@ i18n.registerLang('ru', {
   'browse.label_placeholder': 'Метка (необязательно)',
   'toast.source_added': 'Исходная папка добавлена',
   'toast.source_removed': 'Исходная папка удалена',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Автоматическое сканирование',
+  'settings.autoscan_desc': 'Исходные папки отслеживаются в реальном времени. Также можно включить периодическое сканирование.',
+  'settings.autoscan_interval': 'Периодическое сканирование',
+  'settings.autoscan_off': 'Отключено',
+  'settings.autoscan_5': 'Каждые 5 мин',
+  'settings.autoscan_15': 'Каждые 15 мин',
+  'settings.autoscan_30': 'Каждые 30 мин',
+  'settings.autoscan_60': 'Каждый час',
+  'settings.autoscan_360': 'Каждые 6 часов',
+  'settings.autoscan_realtime': '⚡ Мониторинг в реальном времени активен',
+  'toast.autoscan_saved': 'Автоматическое сканирование сохранено',
 });

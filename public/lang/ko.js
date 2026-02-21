@@ -222,4 +222,17 @@ i18n.registerLang('ko', {
   'browse.label_placeholder': '라벨 (선택사항)',
   'toast.source_added': '소스 폴더가 추가되었습니다',
   'toast.source_removed': '소스 폴더가 제거되었습니다',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': '자동 스캔',
+  'settings.autoscan_desc': '소스 폴더가 실시간으로 모니터링됩니다. 주기적 스캔도 활성화할 수 있습니다.',
+  'settings.autoscan_interval': '주기적 스캔',
+  'settings.autoscan_off': '비활성화',
+  'settings.autoscan_5': '5분마다',
+  'settings.autoscan_15': '15분마다',
+  'settings.autoscan_30': '30분마다',
+  'settings.autoscan_60': '매시간',
+  'settings.autoscan_360': '6시간마다',
+  'settings.autoscan_realtime': '⚡ 실시간 모니터링 활성',
+  'toast.autoscan_saved': '자동 스캔 설정 저장됨',
 });

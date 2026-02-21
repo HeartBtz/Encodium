@@ -200,4 +200,17 @@ i18n.registerLang('nl', {
   'browse.label_placeholder': 'Label (optioneel)',
   'toast.source_added': 'Bronmap toegevoegd',
   'toast.source_removed': 'Bronmap verwijderd',
+
+  // ── Auto-scan ──
+  'settings.autoscan_title': 'Automatisch scannen',
+  'settings.autoscan_desc': 'Bronmappen worden in realtime bewaakt. U kunt ook periodiek scannen inschakelen.',
+  'settings.autoscan_interval': 'Periodiek scannen',
+  'settings.autoscan_off': 'Uitgeschakeld',
+  'settings.autoscan_5': 'Elke 5 min',
+  'settings.autoscan_15': 'Elke 15 min',
+  'settings.autoscan_30': 'Elke 30 min',
+  'settings.autoscan_60': 'Elk uur',
+  'settings.autoscan_360': 'Elke 6 uur',
+  'settings.autoscan_realtime': '⚡ Realtime monitoring actief',
+  'toast.autoscan_saved': 'Automatisch scannen opgeslagen',
 });
