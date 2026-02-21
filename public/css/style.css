@@ -536,3 +536,65 @@ body {
 .form-inline { display: flex; }
 .custom-preset-form summary { list-style: none; }
 .custom-preset-form summary::-webkit-details-marker { display: none; }
+
+/* ── File Browser ───────────────────────────────────────── */
+.browse-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; border-bottom: 1px solid var(--a-border);
+  background: rgba(0,0,0,.15);
+}
+.browse-current-path {
+  font-size: 12px; color: var(--a-text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1;
+}
+.browse-list {
+  max-height: 360px; overflow-y: auto; padding: 4px 0;
+}
+.browse-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px; cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  transition: background var(--a-trans);
+  font-size: 13px; color: var(--a-text);
+}
+.browse-item:hover { background: rgba(168,85,247,.08); }
+.browse-item.selected { background: rgba(168,85,247,.18); }
+.browse-item-icon { color: var(--a-text-muted); flex-shrink: 0; }
+.browse-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-item-badge {
+  font-size: 10px; color: var(--a-text-muted);
+  background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 8px;
+}
+.browse-item.disabled { opacity: .4; cursor: not-allowed; }
+.browse-empty {
+  padding: 24px 16px; text-align: center;
+  color: var(--a-text-muted); font-size: 13px;
+}
+
+/* ── Sources list (settings) ────────────────────────────── */
+.sources-list { display: flex; flex-direction: column; gap: 6px; }
+.source-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: rgba(0,0,0,.15);
+  border: 1px solid var(--a-border);
+  border-radius: var(--a-radius);
+  transition: border-color var(--a-trans);
+}
+.source-card:hover { border-color: rgba(168,85,247,.3); }
+.source-icon { color: var(--a-purple); flex-shrink: 0; }
+.source-info { flex: 1; min-width: 0; }
+.source-path {
+  font-size: 12px; font-family: var(--a-font-mono, monospace);
+  color: var(--a-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.source-label {
+  font-size: 11px; color: var(--a-text-muted); margin-top: 2px;
+}
+.source-empty {
+  padding: 16px; text-align: center;
+  color: var(--a-text-muted); font-size: 13px;
+}
+.path-values { display: flex; flex-direction: column; gap: 2px; }
+.path-values code { display: block; }

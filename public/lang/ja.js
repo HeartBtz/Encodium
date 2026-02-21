@@ -207,4 +207,19 @@ i18n.registerLang('ja', {
   'error.encoding': 'エンコードエラー: {msg}',
   'error.hardware': 'ハードウェアエラー: {msg}',
   'error.generic': 'エラー: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'ソースディレクトリ',
+  'settings.sources_desc': 'エンコード対象のメディアを含むフォルダを管理します。',
+  'settings.sources_add': '📁 フォルダを追加',
+  'settings.sources_remove': 'このソースを削除',
+  'settings.sources_empty': 'ソースフォルダが設定されていません。以下から追加してください。',
+  'settings.sources_confirm_remove': 'このソースフォルダを削除してもよろしいですか？',
+  'browse.title': '📁 フォルダを参照',
+  'browse.select': '✔ 選択',
+  'browse.cancel': 'キャンセル',
+  'browse.empty': 'サブフォルダなし',
+  'browse.label_placeholder': 'ラベル（任意）',
+  'toast.source_added': 'ソースフォルダを追加しました',
+  'toast.source_removed': 'ソースフォルダを削除しました',
 });

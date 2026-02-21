@@ -185,4 +185,19 @@ i18n.registerLang('nl', {
   'error.encoding': 'Encoding-fout: {msg}',
   'error.hardware': 'Hardware-fout: {msg}',
   'error.generic': 'Fout: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Bronmappen',
+  'settings.sources_desc': 'Beheer de mappen met uw media om te coderen.',
+  'settings.sources_add': '📁 Map toevoegen',
+  'settings.sources_remove': 'Deze bron verwijderen',
+  'settings.sources_empty': 'Geen bronmap geconfigureerd. Voeg er hieronder een toe.',
+  'settings.sources_confirm_remove': 'Weet u zeker dat u deze bronmap wilt verwijderen?',
+  'browse.title': '📁 Mappen bladeren',
+  'browse.select': '✔ Selecteren',
+  'browse.cancel': 'Annuleren',
+  'browse.empty': 'Geen submappen',
+  'browse.label_placeholder': 'Label (optioneel)',
+  'toast.source_added': 'Bronmap toegevoegd',
+  'toast.source_removed': 'Bronmap verwijderd',
 });

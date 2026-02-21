@@ -230,4 +230,19 @@ i18n.registerLang('en', {
   'error.encoding': 'Encoding error: {msg}',
   'error.hardware': 'Hardware error: {msg}',
   'error.generic': 'Error: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Source directories',
+  'settings.sources_desc': 'Manage the folders containing your media to encode.',
+  'settings.sources_add': '📁 Add a folder',
+  'settings.sources_remove': 'Remove this source',
+  'settings.sources_empty': 'No source folder configured. Add one below.',
+  'settings.sources_confirm_remove': 'Are you sure you want to remove this source folder?',
+  'browse.title': '📁 Browse folders',
+  'browse.select': '✔ Select',
+  'browse.cancel': 'Cancel',
+  'browse.empty': 'No sub-folders',
+  'browse.label_placeholder': 'Label (optional)',
+  'toast.source_added': 'Source folder added',
+  'toast.source_removed': 'Source folder removed',
 });

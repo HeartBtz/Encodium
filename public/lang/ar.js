@@ -207,4 +207,19 @@ i18n.registerLang('ar', {
   'error.encoding': 'خطأ في الترميز: {msg}',
   'error.hardware': 'خطأ في العتاد: {msg}',
   'error.generic': 'خطأ: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'مجلدات المصدر',
+  'settings.sources_desc': 'إدارة المجلدات التي تحتوي على الوسائط للترميز.',
+  'settings.sources_add': '📁 إضافة مجلد',
+  'settings.sources_remove': 'إزالة هذا المصدر',
+  'settings.sources_empty': 'لم يتم تكوين أي مجلد مصدر. أضف واحداً أدناه.',
+  'settings.sources_confirm_remove': 'هل أنت متأكد أنك تريد إزالة مجلد المصدر هذا؟',
+  'browse.title': '📁 تصفح المجلدات',
+  'browse.select': '✔ تحديد',
+  'browse.cancel': 'إلغاء',
+  'browse.empty': 'لا توجد مجلدات فرعية',
+  'browse.label_placeholder': 'تسمية (اختياري)',
+  'toast.source_added': 'تمت إضافة مجلد المصدر',
+  'toast.source_removed': 'تمت إزالة مجلد المصدر',
 });

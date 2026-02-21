@@ -207,4 +207,19 @@ i18n.registerLang('pt', {
   'error.encoding': 'Erro de codificação: {msg}',
   'error.hardware': 'Erro de hardware: {msg}',
   'error.generic': 'Erro: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Diretórios fonte',
+  'settings.sources_desc': 'Gerencie as pastas contendo suas mídias para codificar.',
+  'settings.sources_add': '📁 Adicionar pasta',
+  'settings.sources_remove': 'Remover esta fonte',
+  'settings.sources_empty': 'Nenhuma pasta fonte configurada. Adicione uma abaixo.',
+  'settings.sources_confirm_remove': 'Tem certeza de que deseja remover esta pasta fonte?',
+  'browse.title': '📁 Navegar pelas pastas',
+  'browse.select': '✔ Selecionar',
+  'browse.cancel': 'Cancelar',
+  'browse.empty': 'Sem subpastas',
+  'browse.label_placeholder': 'Rótulo (opcional)',
+  'toast.source_added': 'Pasta fonte adicionada',
+  'toast.source_removed': 'Pasta fonte removida',
 });

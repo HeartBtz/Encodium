@@ -185,4 +185,19 @@ i18n.registerLang('tr', {
   'error.encoding': 'Kodlama hatası: {msg}',
   'error.hardware': 'Donanım hatası: {msg}',
   'error.generic': 'Hata: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Kaynak dizinler',
+  'settings.sources_desc': 'Kodlanacak medyayı içeren klasörleri yönetin.',
+  'settings.sources_add': '📁 Klasör ekle',
+  'settings.sources_remove': 'Bu kaynağı kaldır',
+  'settings.sources_empty': 'Kaynak klasör yapılandırılmamış. Aşağıdan bir tane ekleyin.',
+  'settings.sources_confirm_remove': 'Bu kaynak klasörü kaldırmak istediğinizden emin misiniz?',
+  'browse.title': '📁 Klasörlere göz at',
+  'browse.select': '✔ Seç',
+  'browse.cancel': 'İptal',
+  'browse.empty': 'Alt klasör yok',
+  'browse.label_placeholder': 'Etiket (isteğe bağlı)',
+  'toast.source_added': 'Kaynak klasör eklendi',
+  'toast.source_removed': 'Kaynak klasör kaldırıldı',
 });

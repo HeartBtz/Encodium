@@ -230,4 +230,19 @@ i18n.registerLang('fr', {
   'error.encoding': 'Erreur encodage : {msg}',
   'error.hardware': 'Erreur matériel : {msg}',
   'error.generic': 'Erreur : {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Dossiers sources',
+  'settings.sources_desc': 'Gérez les dossiers contenant vos médias à encoder.',
+  'settings.sources_add': '📁 Ajouter un dossier',
+  'settings.sources_remove': 'Supprimer cette source',
+  'settings.sources_empty': 'Aucun dossier source configuré. Ajoutez-en un ci-dessous.',
+  'settings.sources_confirm_remove': 'Êtes-vous sûr de vouloir retirer ce dossier source ?',
+  'browse.title': '📁 Parcourir les dossiers',
+  'browse.select': '✔ Sélectionner',
+  'browse.cancel': 'Annuler',
+  'browse.empty': 'Aucun sous-dossier',
+  'browse.label_placeholder': 'Label (optionnel)',
+  'toast.source_added': 'Dossier source ajouté',
+  'toast.source_removed': 'Dossier source retiré',
 });

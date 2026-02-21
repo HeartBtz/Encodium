@@ -252,9 +252,15 @@
         $('#savings-card').style.display = 'none';
       }
 
-      // Paths
+      // Paths — media is now an array of source paths
       if (stats.paths) {
-        $('#path-media').textContent = stats.paths.media || '—';
+        const mediaPaths = stats.paths.media;
+        const mediaEl = $('#path-media');
+        if (Array.isArray(mediaPaths) && mediaPaths.length) {
+          mediaEl.innerHTML = mediaPaths.map(p => `<code>${escHtml(p)}</code>`).join('');
+        } else {
+          mediaEl.innerHTML = `<code>${escHtml(mediaPaths || '—')}</code>`;
+        }
         $('#path-thumbs').textContent = stats.paths.thumbs || '—';
         $('#path-encode').textContent = stats.paths.encode || '—';
       }
@@ -1198,6 +1204,8 @@
       $('#webhook-enabled').checked = notif.enabled;
       $('#webhook-url').value = notif.url || '';
     } catch {}
+    // Media sources
+    loadSources();
     // Custom presets
     loadCustomPresets();
   }
@@ -1231,6 +1239,124 @@
       });
       toast(t('toast.webhook_saved'), 'success');
     } catch (e) { toast(e.message, 'error'); }
+  });
+
+  /* ── Media Sources ────────────────────────────────────────── */
+  async function loadSources() {
+    try {
+      const sources = await api('/settings/sources');
+      const list = $('#sources-list');
+      if (!sources.length) {
+        list.innerHTML = `<div class="source-empty">${t('settings.sources_empty')}</div>`;
+        return;
+      }
+      list.innerHTML = sources.map(s => `
+        <div class="source-card">
+          <div class="source-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="source-info">
+            <div class="source-path">${escHtml(s.path)}</div>
+            ${s.label ? `<div class="source-label">${escHtml(s.label)}</div>` : ''}
+          </div>
+          <button class="btn btn-xs btn-danger" onclick="removeSource(${s.id})" title="${t('settings.sources_remove')}">🗑</button>
+        </div>`).join('');
+    } catch (e) { toast(t('error.generic', { msg: e.message }), 'error'); }
+  }
+
+  window.removeSource = async function(id) {
+    if (!confirm(t('settings.sources_confirm_remove'))) return;
+    try {
+      await api(`/settings/sources/${id}`, { method: 'DELETE' });
+      toast(t('toast.source_removed'), 'success');
+      loadSources();
+      loadDashboard();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  /* ── File Browser Modal ─────────────────────────────────── */
+  let browsePath = '/';
+  let browseCallback = null;
+
+  function openBrowser(startPath, callback) {
+    browsePath = startPath || '/';
+    browseCallback = callback;
+    $('#browse-modal').style.display = '';
+    $('#browse-label').value = '';
+    loadBrowse(browsePath);
+  }
+
+  function closeBrowser() {
+    $('#browse-modal').style.display = 'none';
+    browseCallback = null;
+  }
+
+  async function loadBrowse(dirPath) {
+    browsePath = dirPath;
+    $('#browse-path').textContent = dirPath;
+    const list = $('#browse-dirs');
+    list.innerHTML = `<div class="browse-empty">…</div>`;
+    try {
+      const data = await api(`/browse?path=${encodeURIComponent(dirPath)}`);
+      browsePath = data.current;
+      $('#browse-path').textContent = data.current;
+      $('#browse-up').disabled = !data.parent;
+      if (!data.dirs.length) {
+        list.innerHTML = `<div class="browse-empty">${t('browse.empty')}</div>`;
+        return;
+      }
+      list.innerHTML = data.dirs.map(d => `
+        <div class="browse-item${d.readable ? '' : ' disabled'}" data-path="${escHtml(d.path)}">
+          <span class="browse-item-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </span>
+          <span class="browse-item-name">${escHtml(d.name)}</span>
+          ${d.videoCount ? `<span class="browse-item-badge">${d.videoCount} vid</span>` : ''}
+        </div>`).join('');
+    } catch (e) {
+      list.innerHTML = `<div class="browse-empty" style="color:var(--a-red)">${escHtml(e.message)}</div>`;
+    }
+  }
+
+  // Navigate into a directory on click
+  document.addEventListener('click', e => {
+    const item = e.target.closest('.browse-item');
+    if (!item || item.classList.contains('disabled')) return;
+    loadBrowse(item.dataset.path);
+  });
+
+  $('#browse-up').addEventListener('click', async () => {
+    try {
+      const data = await api(`/browse?path=${encodeURIComponent(browsePath)}`);
+      if (data.parent) loadBrowse(data.parent);
+    } catch {}
+  });
+
+  $('#browse-select').addEventListener('click', () => {
+    const label = $('#browse-label').value.trim();
+    if (browseCallback) browseCallback(browsePath, label);
+    closeBrowser();
+  });
+
+  $('#browse-cancel').addEventListener('click', closeBrowser);
+  $('#browse-modal-close').addEventListener('click', closeBrowser);
+  $('#browse-modal').addEventListener('click', e => {
+    if (e.target === $('#browse-modal')) closeBrowser();
+  });
+
+  // "Add source" button opens the file browser
+  $('#btn-add-source').addEventListener('click', () => {
+    openBrowser('/', async (selectedPath, label) => {
+      try {
+        await api('/settings/sources', {
+          method: 'POST',
+          body: JSON.stringify({ path: selectedPath, label: label || '' }),
+        });
+        toast(t('toast.source_added'), 'success');
+        loadSources();
+        loadDashboard();
+      } catch (e) { toast(e.message, 'error'); }
+    });
   });
 
   /* ── Custom Presets ─────────────────────────────────────── */

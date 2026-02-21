@@ -322,7 +322,7 @@ router.get('/stats', requireAuth, async (req, res) => {
         saved: Number(eStats.total_saved),
       },
       paths: {
-        media: scanner.MEDIA_DIR,
+        media: (await scanner.getSources()).map(s => s.path),
         thumbs: scanner.THUMB_DIR,
         encode: process.env.ENCODE_DIR || path.join(__dirname, '..', 'data', 'encoded'),
       },
@@ -691,6 +691,89 @@ router.post('/settings/notifications', requireAuth, async (req, res) => {
       await db.setSetting('webhook_url', trimmed);
     }
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   SETTINGS — Media Sources (multi-directory)
+   ═══════════════════════════════════════════════════════════════ */
+
+/** Get all media source directories */
+router.get('/settings/sources', requireAuth, async (req, res) => {
+  try {
+    const sources = await scanner.getSources();
+    res.json(sources);
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+});
+
+/** Add a new media source directory */
+router.post('/settings/sources', requireAuth, async (req, res) => {
+  try {
+    const { path: dirPath, label } = req.body;
+    if (!dirPath || typeof dirPath !== 'string') return res.status(400).json({ error: 'Path required' });
+    const resolved = path.resolve(dirPath.trim());
+    // Verify it exists and is a directory
+    try {
+      const stat = await fsp.stat(resolved);
+      if (!stat.isDirectory()) return res.status(400).json({ error: 'Path is not a directory' });
+    } catch { return res.status(400).json({ error: 'Path does not exist or is not accessible' }); }
+    const source = await scanner.addSource(resolved, (label || '').trim() || path.basename(resolved));
+    res.json(source);
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+});
+
+/** Remove a media source directory */
+router.delete('/settings/sources/:id', requireAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+    await scanner.removeSource(id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   FILE BROWSER — Browse server filesystem directories
+   ═══════════════════════════════════════════════════════════════ */
+
+router.get('/browse', requireAuth, async (req, res) => {
+  try {
+    const requestedPath = req.query.path || '/';
+    const resolved = path.resolve(requestedPath);
+
+    // Security: check path exists
+    let stat;
+    try { stat = await fsp.stat(resolved); } catch {
+      return res.status(404).json({ error: 'Path not found' });
+    }
+    if (!stat.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
+
+    // Read directory entries
+    const entries = await fsp.readdir(resolved, { withFileTypes: true });
+    const dirs = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.')) continue; // hide dotfiles
+      let readable = true;
+      try { await fsp.access(path.join(resolved, entry.name), fs.constants.R_OK); } catch { readable = false; }
+      dirs.push({ name: entry.name, path: path.join(resolved, entry.name), readable });
+    }
+    dirs.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Count video files in this directory (non-recursive)
+    let videoCount = 0;
+    for (const entry of entries) {
+      if (entry.isFile() && scanner.VIDEO_EXTS.has(path.extname(entry.name).toLowerCase())) {
+        videoCount++;
+      }
+    }
+
+    res.json({
+      current: resolved,
+      parent: resolved === '/' ? null : path.dirname(resolved),
+      dirs,
+      videoCount,
+    });
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 

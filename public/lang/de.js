@@ -207,4 +207,19 @@ i18n.registerLang('de', {
   'error.encoding': 'Encoding-Fehler: {msg}',
   'error.hardware': 'Hardware-Fehler: {msg}',
   'error.generic': 'Fehler: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Quellverzeichnisse',
+  'settings.sources_desc': 'Verwalten Sie die Ordner mit Ihren Medien zum Kodieren.',
+  'settings.sources_add': '📁 Ordner hinzufügen',
+  'settings.sources_remove': 'Diese Quelle entfernen',
+  'settings.sources_empty': 'Kein Quellordner konfiguriert. Fügen Sie unten einen hinzu.',
+  'settings.sources_confirm_remove': 'Möchten Sie diesen Quellordner wirklich entfernen?',
+  'browse.title': '📁 Ordner durchsuchen',
+  'browse.select': '✔ Auswählen',
+  'browse.cancel': 'Abbrechen',
+  'browse.empty': 'Keine Unterordner',
+  'browse.label_placeholder': 'Bezeichnung (optional)',
+  'toast.source_added': 'Quellordner hinzugefügt',
+  'toast.source_removed': 'Quellordner entfernt',
 });

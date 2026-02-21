@@ -185,4 +185,19 @@ i18n.registerLang('pl', {
   'error.encoding': 'Błąd kodowania: {msg}',
   'error.hardware': 'Błąd sprzętu: {msg}',
   'error.generic': 'Błąd: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Katalogi źródłowe',
+  'settings.sources_desc': 'Zarządzaj folderami zawierającymi media do kodowania.',
+  'settings.sources_add': '📁 Dodaj folder',
+  'settings.sources_remove': 'Usuń to źródło',
+  'settings.sources_empty': 'Brak skonfigurowanych folderów źródłowych. Dodaj jeden poniżej.',
+  'settings.sources_confirm_remove': 'Czy na pewno chcesz usunąć ten folder źródłowy?',
+  'browse.title': '📁 Przeglądaj foldery',
+  'browse.select': '✔ Wybierz',
+  'browse.cancel': 'Anuluj',
+  'browse.empty': 'Brak podfolderów',
+  'browse.label_placeholder': 'Etykieta (opcjonalne)',
+  'toast.source_added': 'Folder źródłowy dodany',
+  'toast.source_removed': 'Folder źródłowy usunięty',
 });

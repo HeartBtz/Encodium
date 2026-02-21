@@ -207,4 +207,19 @@ i18n.registerLang('it', {
   'error.encoding': 'Errore codifica: {msg}',
   'error.hardware': 'Errore hardware: {msg}',
   'error.generic': 'Errore: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Cartelle sorgente',
+  'settings.sources_desc': 'Gestisci le cartelle contenenti i tuoi media da codificare.',
+  'settings.sources_add': '📁 Aggiungi cartella',
+  'settings.sources_remove': 'Rimuovi questa sorgente',
+  'settings.sources_empty': 'Nessuna cartella sorgente configurata. Aggiungine una qui sotto.',
+  'settings.sources_confirm_remove': 'Sei sicuro di voler rimuovere questa cartella sorgente?',
+  'browse.title': '📁 Sfoglia cartelle',
+  'browse.select': '✔ Seleziona',
+  'browse.cancel': 'Annulla',
+  'browse.empty': 'Nessuna sottocartella',
+  'browse.label_placeholder': 'Etichetta (opzionale)',
+  'toast.source_added': 'Cartella sorgente aggiunta',
+  'toast.source_removed': 'Cartella sorgente rimossa',
 });

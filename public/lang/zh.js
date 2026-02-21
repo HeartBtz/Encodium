@@ -207,4 +207,19 @@ i18n.registerLang('zh', {
   'error.encoding': '编码错误：{msg}',
   'error.hardware': '硬件错误：{msg}',
   'error.generic': '错误：{msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': '源目录',
+  'settings.sources_desc': '管理包含待编码媒体的文件夹。',
+  'settings.sources_add': '📁 添加文件夹',
+  'settings.sources_remove': '移除此源',
+  'settings.sources_empty': '未配置源文件夹。请在下方添加。',
+  'settings.sources_confirm_remove': '确定要移除此源文件夹吗？',
+  'browse.title': '📁 浏览文件夹',
+  'browse.select': '✔ 选择',
+  'browse.cancel': '取消',
+  'browse.empty': '无子文件夹',
+  'browse.label_placeholder': '标签（可选）',
+  'toast.source_added': '源文件夹已添加',
+  'toast.source_removed': '源文件夹已移除',
 });

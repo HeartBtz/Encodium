@@ -185,6 +185,29 @@ async function initSchema() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // ── Media Sources ──
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS media_sources (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        path VARCHAR(1000) NOT NULL UNIQUE,
+        label VARCHAR(200) NOT NULL DEFAULT '',
+        enabled TINYINT DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Migrate legacy MEDIA_DIR env var to media_sources table (one-time)
+    const [[{ srcCount }]] = await conn.query('SELECT COUNT(*) as srcCount FROM media_sources');
+    if (srcCount === 0) {
+      const legacyDir = process.env.MEDIA_DIR;
+      if (legacyDir) {
+        await conn.query(
+          'INSERT IGNORE INTO media_sources (path, label) VALUES (?, ?)',
+          [legacyDir, require('path').basename(legacyDir)]
+        );
+      }
+    }
   } finally {
     conn.release();
   }

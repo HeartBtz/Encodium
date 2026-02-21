@@ -207,4 +207,19 @@ i18n.registerLang('ko', {
   'error.encoding': '인코딩 오류: {msg}',
   'error.hardware': '하드웨어 오류: {msg}',
   'error.generic': '오류: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': '소스 디렉토리',
+  'settings.sources_desc': '인코딩할 미디어가 포함된 폴더를 관리합니다.',
+  'settings.sources_add': '📁 폴더 추가',
+  'settings.sources_remove': '이 소스 제거',
+  'settings.sources_empty': '소스 폴더가 설정되지 않았습니다. 아래에서 추가하세요.',
+  'settings.sources_confirm_remove': '이 소스 폴더를 제거하시겠습니까?',
+  'browse.title': '📁 폴더 찾아보기',
+  'browse.select': '✔ 선택',
+  'browse.cancel': '취소',
+  'browse.empty': '하위 폴더 없음',
+  'browse.label_placeholder': '라벨 (선택사항)',
+  'toast.source_added': '소스 폴더가 추가되었습니다',
+  'toast.source_removed': '소스 폴더가 제거되었습니다',
 });

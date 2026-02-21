@@ -207,4 +207,19 @@ i18n.registerLang('ru', {
   'error.encoding': 'Ошибка кодирования: {msg}',
   'error.hardware': 'Ошибка оборудования: {msg}',
   'error.generic': 'Ошибка: {msg}',
+
+  // ── Sources / File Browser ──
+  'settings.sources_title': 'Исходные каталоги',
+  'settings.sources_desc': 'Управляйте папками с медиафайлами для кодирования.',
+  'settings.sources_add': '📁 Добавить папку',
+  'settings.sources_remove': 'Удалить этот источник',
+  'settings.sources_empty': 'Исходные папки не настроены. Добавьте одну ниже.',
+  'settings.sources_confirm_remove': 'Вы уверены, что хотите удалить эту исходную папку?',
+  'browse.title': '📁 Обзор папок',
+  'browse.select': '✔ Выбрать',
+  'browse.cancel': 'Отмена',
+  'browse.empty': 'Нет подпапок',
+  'browse.label_placeholder': 'Метка (необязательно)',
+  'toast.source_added': 'Исходная папка добавлена',
+  'toast.source_removed': 'Исходная папка удалена',
 });

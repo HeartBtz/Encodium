@@ -20,7 +20,8 @@ require('dotenv').config({ override: true });
 
 const logger = require('./services/logger');
 
-const MEDIA_DIR = process.env.MEDIA_DIR || path.join(__dirname, 'data', 'media');
+// Legacy MEDIA_DIR kept for backwards compat (initial migration seed)
+const LEGACY_MEDIA_DIR = process.env.MEDIA_DIR || path.join(__dirname, 'data', 'media');
 const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.flv', '.m4v', '.ts', '.3gp']);
 const THUMB_DIR  = process.env.THUMB_DIR || path.join(__dirname, 'data', 'thumbs');
 
@@ -130,6 +131,42 @@ async function* walkFiles(dirPath) {
   for (const sub of subdirs) yield* walkFiles(sub);
 }
 
+/* ── Media Sources (multi-directory) ─────────────────────── */
+
+async function getSources() {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query('SELECT id, path, label, enabled FROM media_sources ORDER BY id');
+    return rows;
+  } catch {
+    // DB not ready yet — return legacy env var as fallback
+    if (fs.existsSync(LEGACY_MEDIA_DIR)) {
+      return [{ id: 0, path: LEGACY_MEDIA_DIR, label: path.basename(LEGACY_MEDIA_DIR), enabled: 1 }];
+    }
+    return [];
+  }
+}
+
+async function addSource(dirPath, label) {
+  const pool = getPool();
+  const [result] = await pool.query(
+    'INSERT INTO media_sources (path, label) VALUES (?, ?)',
+    [dirPath, label]
+  );
+  return { id: result.insertId, path: dirPath, label, enabled: 1 };
+}
+
+async function removeSource(id) {
+  const pool = getPool();
+  await pool.query('DELETE FROM media_sources WHERE id = ?', [id]);
+}
+
+/** Get all enabled source paths (convenience) */
+async function getSourcePaths() {
+  const sources = await getSources();
+  return sources.filter(s => s.enabled).map(s => s.path);
+}
+
 /* ── Main scanner ────────────────────────────────────────── */
 const BATCH_SIZE = 500;
 
@@ -144,86 +181,94 @@ async function scanDirectory(onProgress = null) {
   const notify = () => { if (onProgress) try { onProgress({ ...scanProgress }); } catch {} };
 
   try {
-    logger.info('scanner', `Starting scan of ${MEDIA_DIR}`);
-    if (!fs.existsSync(MEDIA_DIR)) {
-      logger.error('scanner', `MEDIA_DIR not found: ${MEDIA_DIR}`);
-      throw new Error(`MEDIA_DIR not found: ${MEDIA_DIR}`);
+    const sourcePaths = await getSourcePaths();
+    if (!sourcePaths.length) {
+      logger.error('scanner', 'No media sources configured');
+      throw new Error('No media sources configured. Add at least one source directory in Settings.');
     }
 
     const existingPaths = await getAllExistingPaths();
     logger.info('scanner', `${existingPaths.size} files already in database`);
-    const entries = fs.readdirSync(MEDIA_DIR, { withFileTypes: true });
 
-    // Process top-level directories as folders
-    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
-    // Process root-level files
-    const rootFiles = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
-
-    // Helper to process files from a folder
-    const processFolder = async (folderName, folderPath) => {
-      scanProgress.currentFolder = folderName;
-      notify();
-      let batch = [];
-      const flush = async () => {
-        if (!batch.length) return;
-        await batchInsertVideos(batch);
-        scanProgress.done += batch.length;
-        batch = [];
-        notify();
-      };
-
-      for await (const filePath of walkFiles(folderPath)) {
-        if (cancelRequested) break;
-        const ext = path.extname(filePath).toLowerCase();
-        if (!VIDEO_EXTS.has(ext)) continue;
-        if (existingPaths.has(filePath)) { scanProgress.skipped++; continue; }
-
-        try {
-          const stat = await fs.promises.stat(filePath);
-          scanProgress.total++;
-          batch.push([folderName, path.basename(filePath), filePath, stat.size]);
-          if (batch.length >= BATCH_SIZE) await flush();
-        } catch (e) {
-          scanProgress.errors++;
-          scanProgress.lastError = e.message;
-        }
-      }
-      await flush();
-    };
-
-    // Scan each subdirectory
-    for (const dir of dirs) {
+    for (const mediaDir of sourcePaths) {
       if (cancelRequested) break;
-      await processFolder(dir.name, path.join(MEDIA_DIR, dir.name));
-    }
-
-    // Scan root-level video files
-    if (!cancelRequested && rootFiles.length) {
-      let batch = [];
-      const flush = async () => {
-        if (!batch.length) return;
-        await batchInsertVideos(batch);
-        scanProgress.done += batch.length;
-        batch = [];
-        notify();
-      };
-      for (const f of rootFiles) {
-        if (cancelRequested) break;
-        const ext = path.extname(f.name).toLowerCase();
-        if (!VIDEO_EXTS.has(ext)) continue;
-        const filePath = path.join(MEDIA_DIR, f.name);
-        if (existingPaths.has(filePath)) { scanProgress.skipped++; continue; }
-        try {
-          const stat = await fs.promises.stat(filePath);
-          scanProgress.total++;
-          batch.push(['(root)', f.name, filePath, stat.size]);
-          if (batch.length >= BATCH_SIZE) await flush();
-        } catch (e) {
-          scanProgress.errors++;
-          scanProgress.lastError = e.message;
-        }
+      logger.info('scanner', `Scanning source: ${mediaDir}`);
+      if (!fs.existsSync(mediaDir)) {
+        logger.error('scanner', `Source not found: ${mediaDir}`);
+        scanProgress.errors++;
+        continue;
       }
-      await flush();
+
+      const entries = fs.readdirSync(mediaDir, { withFileTypes: true });
+      const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
+      const rootFiles = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
+
+      // Helper to process files from a folder
+      const processFolder = async (folderName, folderPath) => {
+        scanProgress.currentFolder = folderName;
+        notify();
+        let batch = [];
+        const flush = async () => {
+          if (!batch.length) return;
+          await batchInsertVideos(batch);
+          scanProgress.done += batch.length;
+          batch = [];
+          notify();
+        };
+
+        for await (const filePath of walkFiles(folderPath)) {
+          if (cancelRequested) break;
+          const ext = path.extname(filePath).toLowerCase();
+          if (!VIDEO_EXTS.has(ext)) continue;
+          if (existingPaths.has(filePath)) { scanProgress.skipped++; continue; }
+
+          try {
+            const stat = await fs.promises.stat(filePath);
+            scanProgress.total++;
+            batch.push([folderName, path.basename(filePath), filePath, stat.size]);
+            if (batch.length >= BATCH_SIZE) await flush();
+          } catch (e) {
+            scanProgress.errors++;
+            scanProgress.lastError = e.message;
+          }
+        }
+        await flush();
+      };
+
+      // Scan each subdirectory
+      for (const dir of dirs) {
+        if (cancelRequested) break;
+        await processFolder(dir.name, path.join(mediaDir, dir.name));
+      }
+
+      // Scan root-level video files
+      if (!cancelRequested && rootFiles.length) {
+        let batch = [];
+        const flush = async () => {
+          if (!batch.length) return;
+          await batchInsertVideos(batch);
+          scanProgress.done += batch.length;
+          batch = [];
+          notify();
+        };
+        for (const f of rootFiles) {
+          if (cancelRequested) break;
+          const ext = path.extname(f.name).toLowerCase();
+          if (!VIDEO_EXTS.has(ext)) continue;
+          const filePath = path.join(mediaDir, f.name);
+          if (existingPaths.has(filePath)) { scanProgress.skipped++; continue; }
+          try {
+            const stat = await fs.promises.stat(filePath);
+            scanProgress.total++;
+            batch.push(['(root)', f.name, filePath, stat.size]);
+            if (batch.length >= BATCH_SIZE) await flush();
+          } catch (e) {
+            scanProgress.errors++;
+            scanProgress.lastError = e.message;
+          }
+        }
+        await flush();
+      }
     }
 
     scanProgress.running = false;
@@ -363,14 +408,12 @@ async function syncDatabase() {
       if (fp) existingPaths.delete(fp);
     }
 
-    if (!fs.existsSync(MEDIA_DIR)) {
-      logger.error('sync', `MEDIA_DIR not found: ${MEDIA_DIR}`);
-      throw new Error(`MEDIA_DIR not found: ${MEDIA_DIR}`);
+    const sourcePaths = await getSourcePaths();
+    if (!sourcePaths.length) {
+      logger.error('sync', 'No media sources configured');
+      throw new Error('No media sources configured. Add at least one source directory in Settings.');
     }
 
-    const entries = fs.readdirSync(MEDIA_DIR, { withFileTypes: true });
-    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
-    const rootFiles = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
     let batch = [];
     let addCount = 0;
 
@@ -381,34 +424,47 @@ async function syncDatabase() {
       batch = [];
     };
 
-    for (const dir of dirs) {
-      const folderPath = path.join(MEDIA_DIR, dir.name);
-      for await (const filePath of walkFiles(folderPath)) {
-        const ext = path.extname(filePath).toLowerCase();
+    for (const mediaDir of sourcePaths) {
+      if (!fs.existsSync(mediaDir)) {
+        logger.error('sync', `Source not found: ${mediaDir}`);
+        syncProgress.errors++;
+        continue;
+      }
+
+      logger.info('sync', `Scanning source: ${mediaDir}`);
+      const entries = fs.readdirSync(mediaDir, { withFileTypes: true });
+      const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
+      const rootFiles = entries.filter(e => e.isFile() && !e.name.startsWith('.'));
+
+      for (const dir of dirs) {
+        const folderPath = path.join(mediaDir, dir.name);
+        for await (const filePath of walkFiles(folderPath)) {
+          const ext = path.extname(filePath).toLowerCase();
+          if (!VIDEO_EXTS.has(ext)) continue;
+          if (existingPaths.has(filePath)) continue;
+          try {
+            const stat = await fs.promises.stat(filePath);
+            batch.push([dir.name, path.basename(filePath), filePath, stat.size]);
+            if (batch.length >= BATCH_SIZE) await flushBatch();
+          } catch (e) {
+            syncProgress.errors++;
+          }
+        }
+      }
+
+      // Root files
+      for (const f of rootFiles) {
+        const ext = path.extname(f.name).toLowerCase();
         if (!VIDEO_EXTS.has(ext)) continue;
+        const filePath = path.join(mediaDir, f.name);
         if (existingPaths.has(filePath)) continue;
         try {
           const stat = await fs.promises.stat(filePath);
-          batch.push([dir.name, path.basename(filePath), filePath, stat.size]);
+          batch.push(['(root)', f.name, filePath, stat.size]);
           if (batch.length >= BATCH_SIZE) await flushBatch();
         } catch (e) {
           syncProgress.errors++;
         }
-      }
-    }
-
-    // Root files
-    for (const f of rootFiles) {
-      const ext = path.extname(f.name).toLowerCase();
-      if (!VIDEO_EXTS.has(ext)) continue;
-      const filePath = path.join(MEDIA_DIR, f.name);
-      if (existingPaths.has(filePath)) continue;
-      try {
-        const stat = await fs.promises.stat(filePath);
-        batch.push(['(root)', f.name, filePath, stat.size]);
-        if (batch.length >= BATCH_SIZE) await flushBatch();
-      } catch (e) {
-        syncProgress.errors++;
       }
     }
     await flushBatch();
@@ -426,7 +482,8 @@ async function syncDatabase() {
 }
 
 module.exports = {
-  MEDIA_DIR, THUMB_DIR, VIDEO_EXTS,
+  LEGACY_MEDIA_DIR, THUMB_DIR, VIDEO_EXTS,
+  getSources, addSource, removeSource, getSourcePaths,
   scanDirectory, getProgress, cancelScan,
   getState, enrichVideoMeta, generateMissingThumbs, generateThumb,
   getEnrichProgress, getThumbsProgress,
