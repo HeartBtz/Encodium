@@ -499,30 +499,38 @@ setup_pm2() {
     sleep 1
   fi
 
-  # Generate ecosystem config
-  # NOTE: We do NOT embed env vars here — the app loads .env via dotenv.
-  # This avoids stale values if the user edits .env after install.
-  cat > "$SCRIPT_DIR/ecosystem.config.js" <<EOF
+  # Only generate ecosystem.config.js if it doesn't already exist.
+  # The repo ships a portable version using __dirname — don't overwrite it.
+  if [[ ! -f "$SCRIPT_DIR/ecosystem.config.js" ]]; then
+    log "Generating ecosystem.config.js…"
+    cat > "$SCRIPT_DIR/ecosystem.config.js" <<'EOF'
+const path = require('path');
+const BASE = path.resolve(__dirname);
+
 module.exports = {
   apps: [{
-    name: '${APP_NAME}',
-    script: '${SCRIPT_DIR}/server.js',
-    cwd: '${SCRIPT_DIR}',
+    name: 'encodium',
+    script: path.join(BASE, 'server.js'),
+    cwd: BASE,
     exec_mode: 'fork',
     instances: 1,
     autorestart: true,
     watch: false,
-    max_memory_restart: '512M',
+    max_memory_restart: '2G',
+    kill_timeout: 15000,
     env: {
       NODE_ENV: 'production',
     },
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
-    error_file: '${SCRIPT_DIR}/data/logs/error.log',
-    out_file: '${SCRIPT_DIR}/data/logs/out.log',
+    error_file: path.join(BASE, 'data/logs/error.log'),
+    out_file: path.join(BASE, 'data/logs/out.log'),
     merge_logs: true,
   }],
 };
 EOF
+  else
+    ok "ecosystem.config.js already exists — keeping current version"
+  fi
 
   # Start with PM2
   pm2 start "$SCRIPT_DIR/ecosystem.config.js"

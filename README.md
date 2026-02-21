@@ -27,7 +27,7 @@
 
 ### Encoding Engine
 - **Size Guard** — Rejects encodes that are larger than the original, keeping the source intact
-- **Skip Flag** — Videos where encoding produced a larger file are flagged (`encode_skip`) to prevent re-encoding; force re-encode available from the UI
+- **Skip Flag** — Videos where encoding produced a larger file are flagged (`encode_skip`) to prevent re-encoding; filter by skip status in the library; force re-encode from UI
 - **HDR Preservation** — 10-bit/HDR10 color metadata detection and passthrough
 - **HDR → SDR Tonemapping** — Optional zscale-based tonemap filter chain
 - **Dolby Vision Protection** — Skips DV files to avoid data loss
@@ -36,7 +36,7 @@
 - **GPU → CPU Fallback** — Automatic retry with software decode on hwaccel failure
 - **Output Validation** — Checks codec, duration, file integrity after every encode
 - **Per-job Logs** — Detailed ffmpeg logs for every encoding job, accessible from UI
-- **Crash Recovery** — Stalled jobs automatically re-queued on server restart
+- **Crash Recovery** — Stalled jobs automatically re-queued on server restart; orphan ffmpeg processes killed; stale temp files cleaned up
 
 ### Queue & Scheduling
 - **Queue Management** — Configurable worker count (1–8), cancel/retry/delete jobs
@@ -56,6 +56,7 @@
 - **Shift-click Range Selection** — Select multiple videos at once with Shift+click
 - **Select All (filtered)** — Select all videos matching the current search/filter across all pages
 - **Dark Theme** — Responsive single-page application
+- **Internationalization** — 14 languages (EN, FR, DE, ES, IT, PT, NL, PL, RU, TR, AR, JA, KO, ZH)
 - **Authentication** — JWT-based login with admin roles
 
 ## Requirements
@@ -101,6 +102,9 @@ pm2 status
 pm2 logs encodium
 pm2 restart encodium
 pm2 stop encodium
+
+# After editing ecosystem.config.js, you must delete + start (restart won't reload config):
+pm2 delete encodium && pm2 start ecosystem.config.js
 ```
 
 ### Systemd
