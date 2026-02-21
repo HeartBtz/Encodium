@@ -15,7 +15,7 @@
   const libLimit = 50;
   let libTotal = 0;
   let lastClickedCardIdx = -1;
-  let libOrder = 'asc';
+  let libOrder = 'desc';
   let libSelected = new Set();
   let libSearchTimer = null;
 
@@ -669,8 +669,25 @@
     const wrap = $('#lib-pagination');
     if (pages <= 1) { wrap.innerHTML = ''; return; }
     let html = '';
-    for (let p = 1; p <= pages; p++) {
-      html += `<button class="page-btn ${p === current ? 'active' : ''}" data-page="${p}">${p}</button>`;
+    const MAX_VISIBLE = 7;
+    if (pages <= MAX_VISIBLE + 2) {
+      for (let p = 1; p <= pages; p++) {
+        html += `<button class="page-btn ${p === current ? 'active' : ''}" data-page="${p}">${p}</button>`;
+      }
+    } else {
+      // Truncated pagination: 1 ... 4 5 6 ... 50
+      const range = [];
+      range.push(1);
+      let lo = Math.max(2, current - 2);
+      let hi = Math.min(pages - 1, current + 2);
+      if (lo > 2) range.push(-1); // ellipsis
+      for (let p = lo; p <= hi; p++) range.push(p);
+      if (hi < pages - 1) range.push(-1); // ellipsis
+      range.push(pages);
+      for (const p of range) {
+        if (p === -1) { html += '<span class="page-ellipsis">…</span>'; }
+        else { html += `<button class="page-btn ${p === current ? 'active' : ''}" data-page="${p}">${p}</button>`; }
+      }
     }
     wrap.innerHTML = html;
     $$('.page-btn', wrap).forEach(btn => {

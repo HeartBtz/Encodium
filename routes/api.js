@@ -684,7 +684,7 @@ router.post('/settings/notifications', requireAuth, async (req, res) => {
         }
         // Block private/internal IPs
         const host = parsed.hostname;
-        if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|localhost|::1|\[::1\])/i.test(host)) {
+        if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|fc|fd|fe80|localhost|::1|\[::1\]|\[fc|\[fd|\[fe80)/i.test(host)) {
           return res.status(400).json({ error: 'Internal/private URLs are not allowed' });
         }
       }

@@ -67,7 +67,8 @@ const commands = {
               SUM(status='pending') as pending,
               SUM(status='encoding') as encoding,
               SUM(status='done') as done,
-              SUM(status='failed') as failed
+              SUM(status='error') as errors,
+              SUM(status='cancelled') as cancelled
        FROM encode_jobs`
     );
     console.log('\n  Encodium Statistics');
@@ -76,8 +77,10 @@ const commands = {
     console.log(`  Total size:   ${(vStats.total_size / 1e9).toFixed(2)} GB`);
     console.log(`  Jobs total:   ${jStats.total}`);
     console.log(`  Jobs pending: ${jStats.pending || 0}`);
+    console.log(`  Jobs encoding:${jStats.encoding || 0}`);
     console.log(`  Jobs done:    ${jStats.done || 0}`);
-    console.log(`  Jobs failed:  ${jStats.failed || 0}`);
+    console.log(`  Jobs errors:  ${jStats.errors || 0}`);
+    console.log(`  Jobs cancelled:${jStats.cancelled || 0}`);
     console.log('');
     process.exit(0);
   },

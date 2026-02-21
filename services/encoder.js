@@ -1086,8 +1086,15 @@ async function processQueue() {
       broadcast('job_update', { id: job.id, status: 'encoding', video_id: job.video_id });
 
       // Add placeholder to active map so workerCount check works
-      // The cancel() must propagate the stop signal even if ffmpeg hasn't spawned yet
-      active.set(job.id, { proc: null, video_id: job.video_id, cancel() { running = false; } });
+      active.set(job.id, {
+        proc: null, video_id: job.video_id,
+        cancel() {
+          // Revert this single job to cancelled (don't stop the whole encoder)
+          db.getPool().query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=? AND status='encoding'", [job.id]).catch(() => {});
+          broadcast('job_update', { id: job.id, status: 'cancelled' });
+          active.delete(job.id);
+        },
+      });
 
       processJob(job)
         .catch(e => logger.error('encoder', `Job #${job.id} crash: ${e.message}`))

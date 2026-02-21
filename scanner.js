@@ -20,7 +20,7 @@ require('dotenv').config({ override: true });
 
 const logger = require('./services/logger');
 
-const MEDIA_DIR = process.env.MEDIA_DIR || '/home/coder/Videos';
+const MEDIA_DIR = process.env.MEDIA_DIR || path.join(__dirname, 'data', 'media');
 const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.flv', '.m4v', '.ts', '.3gp']);
 const THUMB_DIR  = process.env.THUMB_DIR || path.join(__dirname, 'data', 'thumbs');
 
