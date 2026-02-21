@@ -559,6 +559,13 @@ async function processJob(job) {
   let tmpFile = null;
 
   try {
+    // Abort immediately if encoder is stopping (PM2 restart, graceful shutdown)
+    if (!running) {
+      jobLog.warn('Encoder is stopping — aborting job before start');
+      await pool.query("UPDATE encode_jobs SET status='pending', started_at=NULL WHERE id=?", [job.id]);
+      return;
+    }
+
     jobLog.info(`=== Job #${job.id} started ===`);
     jobLog.info(`Video ID: ${job.video_id}, Preset: ${job.preset_id}`);
 
@@ -652,6 +659,13 @@ async function processJob(job) {
     jobLog.info(`Output: ${outFile}`);
     jobLog.info(`Temp: ${tmpFile}`);
 
+    // ── Check running flag again after probing (probing can take 5-15s) ──
+    if (!running) {
+      jobLog.warn('Encoder stopped during probing — returning job to pending');
+      await pool.query("UPDATE encode_jobs SET status='pending', started_at=NULL WHERE id=?", [job.id]);
+      return;
+    }
+
     // ── Lock device & update status ──
     devKey = devKeyFor(preset);
     const gpuIdx = gpuIndexFor(preset);
@@ -696,13 +710,22 @@ async function processJob(job) {
       return;
     }
 
+    // ffmpeg killed by external signal (PM2 restart, OOM, etc.) — return to pending for recovery
+    if (result.code === null) {
+      jobLog.error('ffmpeg killed by external signal — returning job to pending for recovery');
+      await pool.query("UPDATE encode_jobs SET status='pending', error='ffmpeg killed by signal (server restart?)', started_at=NULL WHERE id=?", [job.id]);
+      broadcast('job_update', { id: job.id, status: 'pending' });
+      try { await fsp.unlink(tmpFile); } catch {}
+      return;
+    }
+
     if (result.code !== 0) {
       // Extract meaningful error lines from stderr (skip metadata/progress noise)
       const allStderr = result.stderrHead + '\n' + result.stderrTail;
       const errorLines = allStderr.split('\n').filter(l =>
         /error|cannot|invalid|failed|not found|no such|denied|killed|abort|segfault|signal/i.test(l)
       ).slice(0, 20).join('\n');
-      const errMsg = `ffmpeg exited with code ${result.code}${result.code === null ? ' (killed by signal)' : ''}.\n${errorLines || result.stderrTail.slice(-2000)}`;
+      const errMsg = `ffmpeg exited with code ${result.code}.\n${errorLines || result.stderrTail.slice(-2000)}`;
       jobLog.error(errMsg);
       await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
         [errMsg.slice(0, 5000), job.id]);
@@ -934,6 +957,14 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
         if (result.cancelled) { resolve(result); return; }
         if (result.code === 0) { resolve(result); return; }
 
+        // exit code null = killed by external signal (PM2 restart, OOM, etc.)
+        // Do NOT fall back to SW — the kill was external, not an encoder issue.
+        if (result.code === null) {
+          jobLog.error('HW ffmpeg was killed by external signal — aborting (not falling back to SW)');
+          resolve(result);
+          return;
+        }
+
         jobLog.warn(`HW decode failed (exit ${result.code}), falling back to CPU decode...`);
         logger.warn('encoder', `Job #${job.id}: HW decode failed, retrying with CPU decode`);
         try { await fsp.unlink(tmpFile); } catch {}
@@ -1049,7 +1080,8 @@ async function processQueue() {
       broadcast('job_update', { id: job.id, status: 'encoding', video_id: job.video_id });
 
       // Add placeholder to active map so workerCount check works
-      active.set(job.id, { proc: null, video_id: job.video_id, cancel() {} });
+      // The cancel() must propagate the stop signal even if ffmpeg hasn't spawned yet
+      active.set(job.id, { proc: null, video_id: job.video_id, cancel() { running = false; } });
 
       processJob(job)
         .catch(e => logger.error('encoder', `Job #${job.id} crash: ${e.message}`))
@@ -1266,7 +1298,7 @@ function stop() {
   running = false;
   if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
   for (const e of active.values()) e.cancel();
-  logger.info('encoder', 'Encoder stopped');
+  logger.info('encoder', `Encoder stopped — cancelled ${active.size} active job(s)`);
 }
 
 module.exports = {

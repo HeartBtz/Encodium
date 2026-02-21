@@ -69,9 +69,17 @@ async function boot() {
   });
 
   /* ── Graceful shutdown ─────────────────────────────────── */
+  let shuttingDown = false;
   const shutdown = async (signal) => {
+    if (shuttingDown) return;   // prevent double-shutdown
+    shuttingDown = true;
     console.log(`\n[server] ${signal} received — shutting down gracefully…`);
     encoder.stop();
+    // Give ffmpeg processes time to exit after SIGTERM (up to 8s)
+    const deadline = Date.now() + 8000;
+    while (encoder.getStatus().activeJobs > 0 && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 500));
+    }
     try { await db.getPool().end(); } catch {}
     console.log('[server] Cleanup complete. Exiting.');
     process.exit(0);
