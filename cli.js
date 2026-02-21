@@ -29,9 +29,7 @@ const commands = {
     console.log(`[cli] Scan complete. Found ${result.found} files, inserted ${result.inserted}.`);
     console.log('[cli] Enriching metadata…');
     await scanner.enrichVideoMeta();
-    console.log('[cli] Generating thumbnails…');
-    await scanner.generateMissingThumbs();
-    console.log('[cli] All done.');
+    console.log('[cli] All done. Thumbnails will be generated on-demand when viewed.');
     await db.getPool().end();
     process.exit(0);
   },

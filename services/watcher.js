@@ -68,12 +68,7 @@ async function runFullPipeline(reason = 'auto') {
       await sc.enrichVideoMeta();
       broadcast('pipeline_status', { step: 'enrich', status: 'done', reason });
     }
-    // Generate thumbnails if not already running
-    if (!sc.getThumbsProgress().running) {
-      broadcast('pipeline_status', { step: 'thumbs', status: 'running', reason });
-      await sc.generateMissingThumbs();
-      broadcast('pipeline_status', { step: 'thumbs', status: 'done', reason });
-    }
+    // Thumbnails are generated on-demand when the library is viewed
     broadcast('pipeline_status', { step: 'complete', status: 'done', reason });
     logger.success('watcher', `Auto-pipeline complete — trigger: ${reason}`);
   } catch (e) {
@@ -107,17 +102,13 @@ async function runAutoSync(reason = 'auto') {
   try {
     await sc.syncDatabase();
     broadcast('pipeline_status', { step: 'sync', status: 'done', reason });
-    // Also enrich + thumbs for any newly added files
+    // Also enrich for any newly added files
     if (!sc.getEnrichProgress().running) {
       broadcast('pipeline_status', { step: 'enrich', status: 'running', reason });
       await sc.enrichVideoMeta();
       broadcast('pipeline_status', { step: 'enrich', status: 'done', reason });
     }
-    if (!sc.getThumbsProgress().running) {
-      broadcast('pipeline_status', { step: 'thumbs', status: 'running', reason });
-      await sc.generateMissingThumbs();
-      broadcast('pipeline_status', { step: 'thumbs', status: 'done', reason });
-    }
+    // Thumbnails are generated on-demand when the library is viewed
     broadcast('pipeline_status', { step: 'complete', status: 'done', reason });
     logger.success('watcher', `Auto-sync complete — trigger: ${reason}`);
   } catch (e) {

@@ -86,8 +86,18 @@ function getVideoMeta(filePath) {
   });
 }
 
-/* ── Thumbnail generation ────────────────────────────────── */
+/* ── Thumbnail generation (on-demand, concurrency-limited) ── */
 const thumbGenerating = new Map();
+let thumbActive = 0;
+const THUMB_MAX_CONCURRENT = 3;   // max simultaneous ffmpeg thumb processes
+const thumbQueue = [];             // pending thumb requests
+
+function _runNextThumb() {
+  while (thumbActive < THUMB_MAX_CONCURRENT && thumbQueue.length) {
+    const next = thumbQueue.shift();
+    next();
+  }
+}
 
 function generateThumb(filePath, videoId) {
   if (!ffmpeg) return Promise.resolve(null);
@@ -97,12 +107,20 @@ function generateThumb(filePath, videoId) {
   if (thumbGenerating.has(thumbPath)) return thumbGenerating.get(thumbPath);
 
   const p = new Promise((resolve) => {
-    try {
-      ffmpeg(filePath)
-        .on('error', () => { thumbGenerating.delete(thumbPath); resolve(null); })
-        .on('end',   () => { thumbGenerating.delete(thumbPath); resolve(thumbPath); })
-        .screenshots({ count: 1, timemarks: ['10%'], folder: THUMB_DIR, filename: thumbName, size: '320x?' });
-    } catch { thumbGenerating.delete(thumbPath); resolve(null); }
+    function doGenerate() {
+      thumbActive++;
+      try {
+        ffmpeg(filePath)
+          .on('error', () => { thumbActive--; thumbGenerating.delete(thumbPath); resolve(null); _runNextThumb(); })
+          .on('end',   () => { thumbActive--; thumbGenerating.delete(thumbPath); resolve(thumbPath); _runNextThumb(); })
+          .screenshots({ count: 1, timemarks: ['10%'], folder: THUMB_DIR, filename: thumbName, size: '320x?' });
+      } catch { thumbActive--; thumbGenerating.delete(thumbPath); resolve(null); _runNextThumb(); }
+    }
+    if (thumbActive < THUMB_MAX_CONCURRENT) {
+      doGenerate();
+    } else {
+      thumbQueue.push(doGenerate);
+    }
   });
   thumbGenerating.set(thumbPath, p);
   return p;
