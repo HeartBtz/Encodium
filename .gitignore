@@ -11,8 +11,10 @@ data/logs/
 # Generated data
 data/thumbs/*
 data/encoded/*
+data/media/*
 !data/thumbs/.gitkeep
 !data/encoded/.gitkeep
+!data/media/.gitkeep
 !data/logs/.gitkeep
 
 # OS
@@ -31,7 +33,6 @@ Thumbs.db
 *.orig
 
 # PM2 / systemd artifacts
-ecosystem.config.js
 .tmp-admin-setup.js
 
 # Temp files

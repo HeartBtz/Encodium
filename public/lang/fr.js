@@ -44,39 +44,12 @@ i18n.registerLang('fr', {
   'dash.path_encode': 'Encodage',
 
   // ── Scan ──
-  'dash.scan_title': 'Scanner les médias',
-  'dash.scan_desc': 'Scanne le dossier médias et indexe les nouveaux fichiers vidéo.',
-  'dash.scan_start': '▶ Démarrer le scan',
-  'dash.scan_cancel': '⏹ Annuler',
-  'toast.scan_started': 'Scan lancé',
-  'toast.cancel_requested': 'Annulation demandée',
-  'scan.progress': '{done}/{total} – {folder} ({skipped} ignorés, {errors} erreurs)',
-  'scan.cancelled': 'Scan annulé',
-  'scan.done': 'Terminé — {total} fichiers, {errors} erreurs',
 
   // ── Sync ──
-  'dash.sync_title': 'Synchroniser la base',
-  'dash.sync_desc': 'Supprime les entrées orphelines et ajoute les nouveaux fichiers sans tout rescanner.',
-  'dash.sync_start': '🔄 Synchroniser',
-  'toast.sync_started': 'Synchronisation lancée',
-  'sync.progress': '{done}/{total} vérifiés — {removed} supprimé(s), {added} ajouté(s), {errors} erreurs',
-  'sync.done': 'Terminé — {removed} supprimé(s), {added} ajouté(s), {errors} erreurs',
 
   // ── Enrich ──
-  'dash.enrich_title': 'Enrichir les métadonnées',
-  'dash.enrich_desc': 'Extrait codec, durée, résolution via ffprobe.',
-  'dash.enrich_start': '▶ Enrichir',
-  'toast.enrich_started': 'Enrichissement lancé',
-  'enrich.progress': '{done}/{total} ({errors} erreurs)',
-  'enrich.done': 'Terminé — {total} vidéos, {errors} erreurs',
 
   // ── Thumbs ──
-  'dash.thumbs_title': 'Générer les miniatures',
-  'dash.thumbs_desc': 'Crée les thumbnails manquantes.',
-  'dash.thumbs_start': '▶ Générer',
-  'toast.thumbs_started': 'Génération des miniatures lancée',
-  'thumbs.progress': '{done}/{total} ({errors} erreurs)',
-  'thumbs.done': 'Terminé — {total} miniatures, {errors} erreurs',
 
   // ── Codec chart ──
   'dash.codec_dist': 'Distribution des codecs',

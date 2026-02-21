@@ -1159,6 +1159,9 @@ async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
   const preset = caps.presets.find(p => p.id === presetId);
   if (!preset) throw new Error(`Unknown preset: ${presetId}`);
 
+  // Clone preset and apply custom CQ if provided (avoids mutating cached preset)
+  const presetToStore = opts.customCq != null ? { ...preset, cq: opts.customCq } : preset;
+
   const pool = db.getPool();
   const [[video]] = await pool.query('SELECT size, codec, encode_skip FROM videos WHERE id=?', [video_id]);
   if (!video) throw new Error(`Video ${video_id} not found`);
@@ -1190,10 +1193,10 @@ async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
   const encodeOpts = JSON.stringify({ container, downscale, tonemap });
   const [result] = await pool.query(
     "INSERT INTO encode_jobs (video_id, preset_id, preset_json, replace_original, encode_options, status, file_size_before) VALUES (?,?,?,?,?,?,?)",
-    [video_id, presetId, JSON.stringify(preset), replaceOriginal ? 1 : 0, encodeOpts, 'pending', fileSize]
+    [video_id, presetId, JSON.stringify(presetToStore), replaceOriginal ? 1 : 0, encodeOpts, 'pending', fileSize]
   );
   const id = result.insertId;
-  broadcast('job_update', { id, status: 'pending', video_id, preset: preset.label });
+  broadcast('job_update', { id, status: 'pending', video_id, preset: presetToStore.label });
   logger.info('encoder', `Job #${id} queued: video ${video_id}, preset ${preset.label}`);
   setImmediate(processQueue);
   return id;

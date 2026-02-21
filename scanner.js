@@ -29,7 +29,6 @@ if (!fs.existsSync(THUMB_DIR)) fs.mkdirSync(THUMB_DIR, { recursive: true });
 
 let ffmpeg;
 try { ffmpeg = require('fluent-ffmpeg'); } catch { ffmpeg = null; }
-try { const fp = require('ffprobe-static'); if (ffmpeg) ffmpeg.setFfprobePath(fp.path); } catch {}
 
 /* ── Scan state ──────────────────────────────────────────── */
 let scanProgress = {

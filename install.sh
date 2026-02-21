@@ -382,17 +382,12 @@ create_env() {
   local JWT_SECRET
   JWT_SECRET="$(rand_string 48)"
 
-  # Detect a sensible default MEDIA_DIR
+  # MEDIA_DIR is legacy — sources are managed via the web UI.
+  # If set, it is auto-migrated as the first source on first boot.
   local MEDIA_DIR="${MEDIA_DIR:-}"
   if [[ -z "$MEDIA_DIR" ]]; then
-    if [[ -d "$HOME/Videos" ]]; then
-      MEDIA_DIR="$HOME/Videos"
-    elif [[ -d "$HOME/media" ]]; then
-      MEDIA_DIR="$HOME/media"
-    else
-      MEDIA_DIR="$SCRIPT_DIR/data/media"
-      mkdir -p "$MEDIA_DIR"
-    fi
+    MEDIA_DIR="$SCRIPT_DIR/data/media"
+    mkdir -p "$MEDIA_DIR"
   fi
 
   local ENCODE_DIR="${ENCODE_DIR:-$SCRIPT_DIR/data/encoded}"
@@ -410,7 +405,7 @@ DB_NAME=${SETUP_DB_NAME:-encodium}
 JWT_SECRET=$JWT_SECRET
 PORT=$APP_PORT
 
-# Directories
+# Directories (sources are managed via the web UI)
 MEDIA_DIR=$MEDIA_DIR
 ENCODE_DIR=$ENCODE_DIR
 THUMB_DIR=$SCRIPT_DIR/data/thumbs
@@ -692,6 +687,7 @@ main() {
   echo "    docker compose --profile gpu up -d   # NVIDIA GPU"
   echo ""
   echo -e "  ${YELLOW}⚠  Change admin password after first login!${NC}"
+  echo -e "  ${YELLOW}⚠  Add media sources via Settings > Sources in the web UI.${NC}"
   echo -e "  ${YELLOW}⚠  DB_PASS is required — .env has been pre-configured.${NC}"
   echo -e "  ${YELLOW}⚠  Set JWT_SECRET in .env to persist sessions across restarts.${NC}"
   echo ""

@@ -2,7 +2,7 @@
 
 **Video Encoding Platform** — A standalone web application for scanning, browsing, and batch-encoding video files using hardware-accelerated (GPU) or CPU encoders.
 
-![Node.js](https://img.shields.io/badge/node-18%2B-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey) ![Version](https://img.shields.io/badge/version-1.3.0-purple)
+![Node.js](https://img.shields.io/badge/node-18%2B-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey) ![Version](https://img.shields.io/badge/version-1.4.0-purple)
 
 ## Screenshots
 
@@ -17,13 +17,15 @@
 ## Features
 
 ### Core
-- **Media Scanner** — Recursively scans a configured directory, indexes files by folder, extracts metadata with ffprobe, generates thumbnails
+- **Multi-Source Media Library** — Add multiple source directories via a built-in file browser UI; fully DB-backed
+- **Auto-Scan & Sync** — Real-time file watchers (`fs.watch`) + configurable periodic sync (5 / 15 / 30 / 60 / 360 min); no manual scan needed
 - **Video Library** — Browse, search, filter by filename, folder, codec, resolution, size, duration, and skip status
 - **Video Streaming** — HTML5 player with HTTP range-request support, directly from the UI
 - **Hardware Detection** — Auto-detects NVIDIA NVENC, AMD/Intel VA-API, Intel QSV, and CPU encoders
 - **Batch Encoding** — Select multiple videos, encode with H.265/HEVC or AV1 using detected presets
 - **Multi-GPU Support** — Automatic load-balanced distribution across multiple GPUs
-- **Database Sync** — Remove orphan entries and discover new files without a full rescan
+- **Metadata Enrichment** — Automatic ffprobe extraction of codec, resolution, duration, HDR, audio info
+- **Thumbnail Generation** — Automatic thumbnail creation when videos are scanned
 
 ### Encoding Engine
 - **Size Guard** — Rejects encodes that are larger than the original, keeping the source intact
@@ -51,15 +53,16 @@
 - **Webhook Notifications** — Discord and generic HTTP webhook at queue completion
 
 ### UI & Monitoring
-- **Real-time Progress** — Server-Sent Events (SSE) for live encode progress, log streaming
+- **Real-time Updates** — SSE-powered live progress for encoding jobs, pipeline status, and log streaming; dashboard auto-refreshes when scans complete
 - **Stats Dashboard** — Video count, total size, duration, codec distribution, encoding savings
 - **Encoding Charts** — Daily savings history and before/after size comparison (Chart.js)
+- **File Browser** — Server-side directory browser for adding media source directories (admin only)
 - **Shift-click Range Selection** — Select multiple videos at once with Shift+click
 - **Select All (filtered)** — Select all videos matching the current search/filter across all pages
 - **Truncated Pagination** — Smart pagination with ellipsis for large libraries
 - **Dark Theme** — Responsive single-page application
 - **Internationalization** — 14 languages (EN, FR, DE, ES, IT, PT, NL, PL, RU, TR, AR, JA, KO, ZH)
-- **Authentication** — JWT-based login with admin roles
+- **Authentication** — JWT-based login with admin/member roles
 
 ## Requirements
 
@@ -80,6 +83,8 @@ bash install.sh
 
 The install script handles **everything**: Node.js (via nvm), MariaDB, ffmpeg, npm dependencies, database creation, `.env` configuration, admin account, PM2 + systemd service.
 
+After install, open **http://localhost:4000**, log in with `admin@encodium.local / admin`, and add your media directories via **Settings → Sources**.
+
 ### Docker
 
 ```bash
@@ -88,14 +93,14 @@ cd Encodium
 
 # Create .env with at least DB_PASS and JWT_SECRET
 cp .env.example .env
-# Edit .env → set DB_PASS, JWT_SECRET, MEDIA_DIR
+# Edit .env → set DB_PASS, JWT_SECRET
 
 docker compose up -d                         # CPU only
 docker compose --profile gpu up -d           # NVIDIA GPU
 docker compose exec encodium node cli.js useradd admin@example.com yourpassword
 ```
 
-Open **http://localhost:4000** and log in with the credentials configured during install.
+Open **http://localhost:4000**, log in, and add your media directories via **Settings → Sources**.
 
 ## Updating
 
@@ -152,12 +157,14 @@ node server.js
 | `JWT_SECRET` | — | **Strongly recommended.** Random ephemeral secret used if not set (tokens lost on restart) |
 | `NODE_ENV` | — | Set to `production` to hide error details from clients |
 | `PORT` | `4000` | HTTP server port |
-| `MEDIA_DIR` | `./data/media` | Path to your video library |
+| `MEDIA_DIR` | `./data/media` | **Legacy.** Auto-migrated as first source on boot. Manage sources via the web UI |
 | `ENCODE_DIR` | `./data/encoded` | Output directory for encoded files |
 | `THUMB_DIR` | `./data/thumbs` | Thumbnail storage directory |
-| `MAX_WORKERS` | `2` | Concurrent encoding workers |
+| `MAX_WORKERS` | `2` | Concurrent encoding workers (1–8) |
 
 > **Warning:** `DB_PASS` is **mandatory** — the server refuses to start without it. If `JWT_SECRET` is not set, a random secret is generated at startup and all existing tokens are invalidated on each restart.
+>
+> **Note:** Media sources are now managed via **Settings → Sources** in the web UI. The `MEDIA_DIR` env var is only used for backward-compatible migration on first boot.
 
 ## Security
 
@@ -166,6 +173,7 @@ Encodium includes several security measures:
 - **Helmet** — HTTP security headers (HSTS, X-Frame-Options, etc.)
 - **Rate limiting** — 600 requests/min per IP on API routes + **10 requests/15 min** on login
 - **JWT authentication** — All API routes require a valid Bearer token (ephemeral secret generated if `JWT_SECRET` not set)
+- **Admin-only destructive operations** — Bulk file deletion, source management, worker count, webhook/autoscan settings, and filesystem browsing require admin role
 - **Bcrypt passwords** — User passwords hashed with bcryptjs (cost 10–12)
 - **Parameterized SQL** — All database queries use prepared statements (no SQL injection)
 - **Input validation** — Sort columns whitelisted via `SORT_COLUMN_MAP`, pagination/IDs validated & coerced
@@ -187,7 +195,7 @@ Encodium includes several security measures:
 ## CLI
 
 ```bash
-node cli.js scan      # Full scan + enrich + thumbnails
+node cli.js scan      # Full scan + enrich + thumbnails (all configured sources)
 node cli.js enrich    # Re-run ffprobe metadata extraction
 node cli.js thumbs    # Generate missing thumbnails
 node cli.js clear     # Clear all videos from database
@@ -237,13 +245,18 @@ node cli.js useradd <email> <password> [admin|member]  # Create user
 | GET | `/api/encode/job/:id/log` | View detailed ffmpeg job log |
 | POST | `/api/encode/job/:id/priority` | Set job priority (-10 to +10) |
 | POST | `/api/encode/job/:id/move` | Move job up/down in queue |
-| POST | `/api/encode/workers` | Set worker count (1–8) |
-| **Settings** | | |
+| POST | `/api/encode/workers` | Set worker count (1–8, admin) |
+| **Sources & Settings** | | |
+| GET | `/api/settings/sources` | List media source directories |
+| POST | `/api/settings/sources` | Add a source directory (admin, triggers auto-scan) |
+| DELETE | `/api/settings/sources/:id` | Remove a source + purge its videos (admin) |
+| GET | `/api/browse` | Browse server filesystem (admin only) |
+| GET/POST | `/api/settings/autoscan` | Auto-scan interval configuration (admin) |
 | GET/POST | `/api/settings/schedule` | Encoding schedule window |
-| GET/POST | `/api/settings/notifications` | Webhook configuration |
+| GET/POST | `/api/settings/notifications` | Webhook configuration (admin) |
 | GET/POST/DELETE | `/api/custom-presets` | Custom preset CRUD |
 | **Other** | | |
-| GET | `/api/events` | SSE stream (live job updates, progress, logs) |
+| GET | `/api/events` | SSE stream (job updates, pipeline status, progress, logs) |
 | GET | `/api/logs` | Recent application logs (filterable by level) |
 | POST | `/api/clear` | Clear database (admin only) |
 
@@ -265,17 +278,18 @@ node cli.js useradd <email> <password> [admin|member]  # Create user
 Encodium/
 ├── server.js              # Express entry point, graceful shutdown
 ├── db.js                  # MariaDB schema, migrations, helpers
-├── scanner.js             # Media scanner, metadata enrichment, sync
+├── scanner.js             # Media scanner, metadata enrichment, sync, source CRUD
 ├── cli.js                 # CLI commands (scan, enrich, thumbs, stats, useradd)
 ├── install.sh             # Fully autonomous installation script
 ├── ecosystem.config.js    # PM2 configuration (2G memory, 15s kill_timeout)
+├── .env.example           # Environment variable template
 ├── Dockerfile             # Multi-stage Docker build
 ├── docker-compose.yml     # Docker Compose (CPU + GPU profiles)
-├── .env.example           # Environment variable template
 ├── middleware/
 │   └── auth.js            # JWT authentication (sign, verify, requireAuth, requireAdmin)
 ├── services/
 │   ├── encoder.js         # Encoding engine, queue processor, SSE, validation
+│   ├── watcher.js         # Auto-scan: fs.watch + periodic sync + SSE pipeline events
 │   ├── gpu-detect.js      # Hardware detection (NVIDIA, VA-API, QSV, CPU)
 │   └── logger.js          # Centralized ring-buffer logging + SSE broadcast
 ├── routes/
@@ -292,19 +306,20 @@ Encodium/
     ├── logs/              # Per-job ffmpeg logs + PM2 logs
     ├── thumbs/            # Generated thumbnails
     ├── encoded/           # Encoded output staging
-    └── media/             # Default media directory
+    └── media/             # Default media directory (legacy)
 ```
 
 ## Database Schema
 
 | Table | Purpose |
 |---|---|
-| `users` | Admin authentication (bcrypt hashes) |
+| `users` | Authentication (bcrypt hashes, admin/member roles) |
 | `videos` | Scanned video files & metadata (includes `encode_skip` flag) |
 | `encode_jobs` | Encoding queue & job history (priority, options, progress) |
-| `settings` | Key-value app settings (schedule, webhook) |
+| `settings` | Key-value app settings (schedule, webhook, autoscan interval) |
 | `encoding_savings` | Permanent encoding savings ledger |
 | `custom_presets` | User-defined encoding presets |
+| `media_sources` | Configured media source directories (path, label, enabled) |
 
 Migrations run automatically on startup via `db.initSchema()`.
 
@@ -317,6 +332,30 @@ Migrations run automatically on startup via `db.initSchema()`.
 5. **Diagnostics on signal kill** — Memory RSS/heap logged on SIGTERM, ffmpeg PID tracking
 
 ## Changelog
+
+### v1.4.0
+- **Multi-source media directories** — Replace single `MEDIA_DIR` with a file-browser UI + DB-backed source management
+- **Auto-scan pipeline** — Real-time file watchers (`fs.watch`, 8s debounce) + configurable periodic sync; scan → enrich → thumbs runs automatically when sources change
+- **SSE pipeline events** — Dashboard and library auto-refresh when background scan/enrich/thumbs complete; no page reload needed
+- **Pipeline queueing** — Adding a source while a pipeline is already running queues the scan and executes it automatically after the current one finishes
+- **Source purge** — Removing a source directory also purges all its indexed videos and thumbnails
+- **File browser** — Server-side directory browser for adding media sources (admin only)
+- **Admin-only guards** — Destructive operations (file deletion, source management, worker count, webhook/autoscan settings, filesystem browsing) now require admin role
+- **GPU preset cache safety** — Custom preset CQ values no longer mutate the shared hardware detection cache
+- **Duplicate source detection** — Adding an already-configured source returns 409 with translated error
+- **Removed manual buttons** — Scan, Sync, Enrich, and Generate Thumbnails buttons removed from dashboard (all automatic now)
+- **Auto-retry on network errors** — Frontend API calls retry once (2s delay) on transient connection failures before showing error
+- **SSE reconnect recovery** — Dashboard/library/queue state auto-refreshes when SSE reconnects after a server restart
+- **CLI improvements** — Fixed DB pool leak on exit; scan command shows configured sources instead of stale `MEDIA_DIR`
+- **Watcher loop fix** — `fs.watch` events are suppressed during active sync/pipeline to prevent infinite sync loops
+- **i18n** — 14 languages for all new features (sources, file browser, autoscan); orphan translation keys cleaned up
+- **install.sh** — Simplified MEDIA_DIR setup; sources are managed via web UI post-install
+- **.env.example** — `MEDIA_DIR` documented as legacy
+- **.gitignore** — `ecosystem.config.js` tracked properly; `data/media/` ignored; `.gitkeep` files added
+- **`package.json`** — Added `engines: { node: ">=18.0.0" }`
+- **Dead code cleanup** — Removed unused `ffprobe-static` import, duplicate `debouncedPipelineRefresh()` call
+- **`<html lang>`** — Changed from `fr` to `en`
+- **SyntaxError fix** — Fixed literal `\n` in encoder.js that caused server crash loops
 
 ### v1.3.0
 - **Server-side queue counts** — Accurate encoding/pending/done counters via SQL aggregation (fixes 0 encoding display with large queues)

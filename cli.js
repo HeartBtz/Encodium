@@ -3,7 +3,7 @@
  * Encodium CLI — Command-line interface
  *
  * Usage:
- *   node cli.js scan      — Scan MEDIA_DIR for video files
+ *   node cli.js scan      — Scan all configured source directories
  *   node cli.js enrich    — Enrich metadata (ffprobe) for scanned videos
  *   node cli.js thumbs    — Generate missing thumbnails
  *   node cli.js clear     — Clear all videos from the database
@@ -23,7 +23,8 @@ const commands = {
   async scan() {
     console.log('[cli] Initializing database…');
     await db.initSchema();
-    console.log(`[cli] Scanning: ${process.env.MEDIA_DIR || '(MEDIA_DIR not set)'}`);
+    const sources = await scanner.getSourcePaths();
+    console.log(`[cli] Scanning ${sources.length} source(s): ${sources.join(', ') || '(no sources configured)'}`);
     const result = await scanner.scanDirectory();
     console.log(`[cli] Scan complete. Found ${result.found} files, inserted ${result.inserted}.`);
     console.log('[cli] Enriching metadata…');
@@ -31,6 +32,7 @@ const commands = {
     console.log('[cli] Generating thumbnails…');
     await scanner.generateMissingThumbs();
     console.log('[cli] All done.');
+    await db.getPool().end();
     process.exit(0);
   },
 
@@ -39,6 +41,7 @@ const commands = {
     console.log('[cli] Enriching metadata…');
     await scanner.enrichVideoMeta();
     console.log('[cli] Done.');
+    await db.getPool().end();
     process.exit(0);
   },
 
@@ -47,6 +50,7 @@ const commands = {
     console.log('[cli] Generating thumbnails…');
     await scanner.generateMissingThumbs();
     console.log('[cli] Done.');
+    await db.getPool().end();
     process.exit(0);
   },
 
@@ -55,6 +59,7 @@ const commands = {
     console.log('[cli] Clearing database…');
     await db.clearAll();
     console.log('[cli] Database cleared.');
+    await db.getPool().end();
     process.exit(0);
   },
 
@@ -82,6 +87,7 @@ const commands = {
     console.log(`  Jobs errors:  ${jStats.errors || 0}`);
     console.log(`  Jobs cancelled:${jStats.cancelled || 0}`);
     console.log('');
+    await db.getPool().end();
     process.exit(0);
   },
 
@@ -104,6 +110,7 @@ const commands = {
     const hash = await bcrypt.hash(password, 10);
     const id = await db.createUser(email.split('@')[0], email, hash, role);
     console.log(`[cli] User created: ${email} (id=${id}, role=${role})`);
+    await db.getPool().end();
     process.exit(0);
   },
 };
@@ -111,7 +118,7 @@ const commands = {
 if (!cmd || !commands[cmd]) {
   console.log('Usage: node cli.js <command>\n');
   console.log('Commands:');
-  console.log('  scan                          Scan MEDIA_DIR for video files');
+  console.log('  scan                          Scan all configured sources');
   console.log('  enrich                        Enrich metadata (ffprobe)');
   console.log('  thumbs                        Generate missing thumbnails');
   console.log('  clear                         Clear all videos from database');

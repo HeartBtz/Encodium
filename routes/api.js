@@ -237,7 +237,7 @@ router.get('/videos/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-router.post('/videos/delete', requireAuth, async (req, res) => {
+router.post('/videos/delete', requireAdmin, async (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
@@ -437,6 +437,7 @@ router.get('/encode/history', requireAuth, async (req, res) => {
 router.post('/encode/enqueue', requireAuth, async (req, res) => {
   try {
     let { videoIds, presetId, replaceOriginal, container, downscale, tonemap, force } = req.body;
+    let customCq;
     if (!presetId) return res.status(400).json({ error: 'presetId required' });
     const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
     if (!ids.length) return res.status(400).json({ error: 'videoIds required' });
@@ -453,14 +454,13 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
       const hwPreset = caps.presets.find(p => p.codec === cp.codec);
       if (!hwPreset) return res.status(400).json({ error: `No encoder available for codec ${cp.codec}` });
       presetId = hwPreset.id;
-      // Override with custom CQ
-      hwPreset.cq = cp.cq;
+      customCq = cp.cq;  // pass custom CQ via opts (avoids mutating cached preset)
       container = cp.container || 'auto';
       downscale = cp.downscale || '';
       tonemap = !!cp.tonemap;
     }
 
-    const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap, force: !!force };
+    const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap, force: !!force, customCq: customCq || undefined };
     const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, opts);
     res.json({ jobs: result.jobs, skipped: result.skipped });
   } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
@@ -497,7 +497,7 @@ router.delete('/encode/job/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
-router.post('/encode/workers', requireAuth, (req, res) => {
+router.post('/encode/workers', requireAdmin, (req, res) => {
   const { count } = req.body;
   if (!count || count < 1 || count > 8) return res.status(400).json({ error: 'count 1-8' });
   const n = encoder.setWorkerCount(count);
@@ -669,7 +669,7 @@ router.get('/settings/notifications', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-router.post('/settings/notifications', requireAuth, async (req, res) => {
+router.post('/settings/notifications', requireAdmin, async (req, res) => {
   try {
     const { enabled, url } = req.body;
     if (enabled !== undefined) await db.setSetting('webhook_enabled', enabled ? '1' : '0');
@@ -706,7 +706,7 @@ router.get('/settings/autoscan', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-router.post('/settings/autoscan', requireAuth, async (req, res) => {
+router.post('/settings/autoscan', requireAdmin, async (req, res) => {
   try {
     const watcher = require('../services/watcher');
     const { interval } = req.body;
@@ -728,7 +728,7 @@ router.get('/settings/sources', requireAuth, async (req, res) => {
 });
 
 /** Add a new media source directory */
-router.post('/settings/sources', requireAuth, async (req, res) => {
+router.post('/settings/sources', requireAdmin, async (req, res) => {
   try {
     const { path: dirPath, label } = req.body;
     if (!dirPath || typeof dirPath !== 'string') return res.status(400).json({ error: 'Path required' });
@@ -756,7 +756,7 @@ router.post('/settings/sources', requireAuth, async (req, res) => {
 });
 
 /** Remove a media source directory */
-router.delete('/settings/sources/:id', requireAuth, async (req, res) => {
+router.delete('/settings/sources/:id', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
@@ -772,7 +772,7 @@ router.delete('/settings/sources/:id', requireAuth, async (req, res) => {
    FILE BROWSER — Browse server filesystem directories
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/browse', requireAuth, async (req, res) => {
+router.get('/browse', requireAdmin, async (req, res) => {
   try {
     const requestedPath = req.query.path || '/';
     const resolved = path.resolve(requestedPath);

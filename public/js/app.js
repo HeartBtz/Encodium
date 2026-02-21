@@ -31,7 +31,7 @@
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
   const $$ = (sel, ctx) => [...(ctx || document).querySelectorAll(sel)];
 
-  function api(path, opts = {}) {
+  function api(path, opts = {}, _retry = 0) {
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
     return fetch(`/api${path}`, { ...opts, headers })
@@ -43,7 +43,11 @@
         return j;
       })
       .catch(err => {
-        if (err.message === 'Session expirée') throw err;
+        if (err.message === t('error.session_expired')) throw err;
+        // Retry once on network errors (server restart, brief outage)
+        if (err.name === 'TypeError' && _retry < 1) {
+          return new Promise(r => setTimeout(r, 2000)).then(() => api(path, opts, _retry + 1));
+        }
         if (err.name === 'TypeError') throw new Error(t('error.server_unreachable'));
         throw err;
       });
@@ -173,7 +177,15 @@
     if (sse) sse.close();
     if (!token) return;
     sse = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
-    sse.addEventListener('connected', () => { sseRetries = 0; });
+    sse.addEventListener('connected', () => {
+      // If reconnecting after a drop, refresh app state
+      if (sseRetries > 0) {
+        loadDashboard();
+        loadLibrary();
+        loadEncodeQueue();
+      }
+      sseRetries = 0;
+    });
     sse.addEventListener('job_update', e => {
       try { handleJobUpdate(JSON.parse(e.data)); } catch {}
     });
@@ -202,12 +214,7 @@
     const { step, status } = data;
     // When a step finishes, schedule a debounced refresh so we don't flood
     if (status === 'done') {
-      // Each step completion refreshes dashboard stats
       debouncedPipelineRefresh();
-      // Library data changes after scan/sync/enrich steps
-      if (step === 'scan' || step === 'sync' || step === 'enrich' || step === 'thumbs' || step === 'complete') {
-        debouncedPipelineRefresh();
-      }
     }
   }
 

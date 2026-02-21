@@ -35,8 +35,9 @@ function getDb() {
 const activeWatchers = new Map();   // sourcePath → FSWatcher
 let periodicTimer    = null;
 let syncDebounce     = null;
-const DEBOUNCE_MS    = 5000;        // wait 5s after last fs event before syncing
+const DEBOUNCE_MS    = 8000;        // wait 8s after last fs event before syncing
 let pipelineRunning  = false;
+let pendingPipeline  = null;        // queued reason when pipeline skipped (re-runs after current)
 
 /* ── Full pipeline: scan → enrich → thumbs ───────────────── */
 
@@ -48,10 +49,13 @@ let pipelineRunning  = false;
 async function runFullPipeline(reason = 'auto') {
   const sc = getScanner();
   if (pipelineRunning || sc.getState().running || sc.getSyncProgress().running) {
-    logger.info('watcher', `Pipeline skipped (already running) — trigger: ${reason}`);
+    // Queue a re-run so the new source gets scanned after the current pipeline finishes
+    pendingPipeline = reason;
+    logger.info('watcher', `Pipeline queued (already running) — trigger: ${reason}`);
     return;
   }
   pipelineRunning = true;
+  pendingPipeline = null;
   const broadcast = getBroadcast();
   logger.info('watcher', `Auto-pipeline started — trigger: ${reason}`);
   broadcast('pipeline_status', { step: 'scan', status: 'running', reason });
@@ -77,6 +81,12 @@ async function runFullPipeline(reason = 'auto') {
     logger.error('watcher', `Auto-pipeline error: ${e.message}`);
   } finally {
     pipelineRunning = false;
+    // If another pipeline was queued while we were running, execute it now
+    if (pendingPipeline) {
+      const nextReason = pendingPipeline;
+      pendingPipeline = null;
+      setImmediate(() => runFullPipeline(nextReason).catch(() => {}));
+    }
   }
 }
 
@@ -115,11 +125,20 @@ async function runAutoSync(reason = 'auto') {
     logger.error('watcher', `Auto-sync error: ${e.message}`);
   } finally {
     pipelineRunning = false;
+    // If a full pipeline was queued while sync ran, execute it now
+    if (pendingPipeline) {
+      const nextReason = pendingPipeline;
+      pendingPipeline = null;
+      setImmediate(() => runFullPipeline(nextReason).catch(() => {}));
+    }
   }
 }
 
 /* ── Debounced sync (triggered by fs events) ─────────────── */
 function scheduleDebouncedSync() {
+  // Suppress fs events while a pipeline/sync is already active
+  // (walking directories to sync generates inotify events → infinite loop)
+  if (pipelineRunning) return;
   if (syncDebounce) clearTimeout(syncDebounce);
   syncDebounce = setTimeout(() => {
     syncDebounce = null;
