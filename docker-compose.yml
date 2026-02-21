@@ -9,6 +9,10 @@
 #  First run creates the admin account via CLI:
 #    docker compose exec encodium node cli.js useradd admin@example.com yourpassword
 #
+#  Required environment variables (.env or shell):
+#    DB_PASS        — database password (server refuses to start without it)
+#    JWT_SECRET     — strongly recommended (random ephemeral secret used if unset)
+#
 
 services:
   # ── MariaDB ──────────────────────────────────────────────
@@ -19,7 +23,7 @@ services:
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS:-encodium_root_secret}
       MARIADB_DATABASE: ${DB_NAME:-encodium}
       MARIADB_USER: ${DB_USER:-encodium}
-      MARIADB_PASSWORD: ${DB_PASS:-encodium_secret}
+      MARIADB_PASSWORD: ${DB_PASS:?DB_PASS is required}
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
@@ -39,12 +43,13 @@ services:
     ports:
       - "${PORT:-4000}:4000"
     environment:
+      NODE_ENV: production
       DB_HOST: db
       DB_PORT: 3306
       DB_USER: ${DB_USER:-encodium}
-      DB_PASS: ${DB_PASS:-encodium_secret}
+      DB_PASS: ${DB_PASS:?DB_PASS is required}
       DB_NAME: ${DB_NAME:-encodium}
-      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      JWT_SECRET: ${JWT_SECRET:-}
       PORT: 4000
       MEDIA_DIR: /media
       ENCODE_DIR: /app/data/encoded
@@ -70,12 +75,13 @@ services:
     ports:
       - "${PORT:-4000}:4000"
     environment:
+      NODE_ENV: production
       DB_HOST: db
       DB_PORT: 3306
       DB_USER: ${DB_USER:-encodium}
-      DB_PASS: ${DB_PASS:-encodium_secret}
+      DB_PASS: ${DB_PASS:?DB_PASS is required}
       DB_NAME: ${DB_NAME:-encodium}
-      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      JWT_SECRET: ${JWT_SECRET:-}
       PORT: 4000
       MEDIA_DIR: /media
       ENCODE_DIR: /app/data/encoded

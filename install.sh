@@ -399,6 +399,8 @@ create_env() {
 
   cat > "$SCRIPT_DIR/.env" <<EOF
 # Encodium Configuration — auto-generated $(date -Iseconds 2>/dev/null || date)
+NODE_ENV=production
+
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=${SETUP_DB_USER:-encodium}
@@ -682,6 +684,8 @@ main() {
   echo "    docker compose --profile gpu up -d   # NVIDIA GPU"
   echo ""
   echo -e "  ${YELLOW}⚠  Change admin password after first login!${NC}"
+  echo -e "  ${YELLOW}⚠  DB_PASS is required — .env has been pre-configured.${NC}"
+  echo -e "  ${YELLOW}⚠  Set JWT_SECRET in .env to persist sessions across restarts.${NC}"
   echo ""
 }
 

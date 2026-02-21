@@ -32,6 +32,8 @@ COPY . .
 RUN mkdir -p data/logs data/encoded data/thumbs data/media
 
 # Default environment variables (override via docker-compose or .env)
+# DB_PASS is REQUIRED — container will exit without it.
+# JWT_SECRET is recommended to persist sessions across restarts.
 ENV NODE_ENV=production \
     PORT=4000 \
     DB_HOST=db \
