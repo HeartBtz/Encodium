@@ -772,9 +772,9 @@
   async function loadEncodeQueue() {
     const gen = ++_eqGen;
     try {
-      const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=5000')]);
+      const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=200')]);
       if (gen !== _eqGen) return; // a newer request was made — discard stale result
-      renderEncodeStatus(status, history.rows);
+      renderEncodeStatus(status, history.rows, history.counts);
     } catch (e) {
       if (gen === _eqGen) toast(t('error.encoding', {msg: e.message}), 'error');
     }
@@ -800,11 +800,12 @@
     if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }
   }
 
-  function renderEncodeStatus(status, jobs) {
-    // Header stats
+  function renderEncodeStatus(status, jobs, serverCounts) {
+    // Header stats — use server-side counts (accurate even with pagination)
     const header = $('#encode-status');
-    const counts = { pending: 0, encoding: 0, done: 0, error: 0 };
-    (jobs || []).forEach(j => { if (counts.hasOwnProperty(j.status)) counts[j.status]++; });
+    const counts = serverCounts
+      ? { pending: serverCounts.pending || 0, encoding: serverCounts.encoding || 0, done: serverCounts.done || 0, error: serverCounts.error || 0 }
+      : (() => { const c = { pending: 0, encoding: 0, done: 0, error: 0 }; (jobs || []).forEach(j => { if (c.hasOwnProperty(j.status)) c[j.status]++; }); return c; })();
 
     header.innerHTML = `
       <div class="enc-queue-stats">
@@ -821,7 +822,7 @@
     if (badge) {
       const activeCount = counts.encoding + counts.pending;
       if (activeCount > 0) {
-        badge.textContent = activeCount;
+        badge.textContent = activeCount > 999 ? Math.floor(activeCount / 1000) + 'k' : activeCount;
         badge.style.display = '';
       } else {
         badge.style.display = 'none';

@@ -1270,14 +1270,53 @@ function getStatus() {
 
 async function getHistory(limit = 50, offset = 0) {
   const pool = db.getPool();
+
+  // ── 1. Accurate counts from DB (unaffected by LIMIT) ──────────
+  const [[countRow]] = await pool.query(
+    `SELECT COUNT(*) as total,
+            SUM(status='pending')   as pending,
+            SUM(status='encoding')  as encoding,
+            SUM(status='done')      as done,
+            SUM(status='error')     as errors,
+            SUM(status='cancelled') as cancelled
+     FROM encode_jobs`
+  );
+  const counts = {
+    total:     Number(countRow.total),
+    pending:   Number(countRow.pending   || 0),
+    encoding:  Number(countRow.encoding  || 0),
+    done:      Number(countRow.done      || 0),
+    error:     Number(countRow.errors    || 0),
+    cancelled: Number(countRow.cancelled || 0),
+  };
+
+  // ── 2. Always fetch currently-encoding jobs (they may fall outside the LIMIT) ──
+  const [encodingRows] = await pool.query(
+    `SELECT j.*, v.filename, v.file_path, v.folder
+     FROM encode_jobs j LEFT JOIN videos v ON j.video_id = v.id
+     WHERE j.status = 'encoding'
+     ORDER BY j.created_at ASC`
+  );
+  const encodingIds = new Set(encodingRows.map(r => r.id));
+
+  // ── 3. Paginated rows (most recent first) ─────────────────────
   const [rows] = await pool.query(
     `SELECT j.*, v.filename, v.file_path, v.folder
      FROM encode_jobs j LEFT JOIN videos v ON j.video_id = v.id
-     ORDER BY j.created_at DESC LIMIT ? OFFSET ?`,
+     ORDER BY
+       FIELD(j.status, 'encoding', 'pending', 'error', 'cancelled', 'done') ASC,
+       j.created_at DESC
+     LIMIT ? OFFSET ?`,
     [limit, offset]
   );
-  const [[{ total }]] = await pool.query('SELECT COUNT(*) as total FROM encode_jobs');
-  return { rows, total };
+
+  // ── 4. Merge: encoding rows first, then the rest (de-duped) ───
+  const merged = [...encodingRows];
+  for (const r of rows) {
+    if (!encodingIds.has(r.id)) merged.push(r);
+  }
+
+  return { rows: merged, total: counts.total, counts };
 }
 
 async function getJobLog(jobId) {
