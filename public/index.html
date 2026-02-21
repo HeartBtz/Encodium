@@ -123,56 +123,7 @@
           </div>
         </div>
 
-        <div class="admin-card">
-          <div class="card-header">
-            <div class="card-icon ci-blue"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg></div>
-            <div><h3 data-i18n="dash.scan_title">Scanner les médias</h3><p class="muted" data-i18n="dash.scan_desc">Scanne le dossier médias et indexe les nouveaux fichiers vidéo.</p></div>
-          </div>
-          <div class="card-actions">
-            <button class="btn btn-primary" id="btn-scan" data-i18n="dash.scan_start">▶ Démarrer le scan</button>
-            <button class="btn btn-danger hidden" id="btn-scan-cancel" data-i18n="dash.scan_cancel">⏹ Annuler</button>
-          </div>
-          <div id="scan-progress" class="progress-wrap hidden">
-            <div class="progress-bar"><div class="progress-fill" id="scan-bar"></div></div>
-            <span id="scan-detail"></span>
-          </div>
-        </div>
 
-        <div class="admin-card">
-          <div class="card-header">
-            <div class="card-icon ci-orange"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg></div>
-            <div><h3 data-i18n="dash.sync_title">Synchroniser la base</h3><p class="muted" data-i18n="dash.sync_desc">Supprime les entrées orphelines et ajoute les nouveaux fichiers sans tout rescanner.</p></div>
-          </div>
-          <div class="card-actions"><button class="btn btn-primary" id="btn-sync" data-i18n="dash.sync_start">🔄 Synchroniser</button></div>
-          <div id="sync-progress" class="progress-wrap hidden">
-            <div class="progress-bar"><div class="progress-fill" id="sync-bar"></div></div>
-            <span id="sync-detail"></span>
-          </div>
-        </div>
-
-        <div class="admin-card">
-          <div class="card-header">
-            <div class="card-icon ci-green"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v9l4 2"/><circle cx="12" cy="12" r="10"/></svg></div>
-            <div><h3 data-i18n="dash.enrich_title">Enrichir les métadonnées</h3><p class="muted" data-i18n="dash.enrich_desc">Extrait codec, durée, résolution via ffprobe.</p></div>
-          </div>
-          <div class="card-actions"><button class="btn btn-primary" id="btn-enrich" data-i18n="dash.enrich_start">▶ Enrichir</button></div>
-          <div id="enrich-progress" class="progress-wrap hidden">
-            <div class="progress-bar"><div class="progress-fill" id="enrich-bar"></div></div>
-            <span id="enrich-detail"></span>
-          </div>
-        </div>
-
-        <div class="admin-card">
-          <div class="card-header">
-            <div class="card-icon ci-yellow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>
-            <div><h3 data-i18n="dash.thumbs_title">Générer les miniatures</h3><p class="muted" data-i18n="dash.thumbs_desc">Crée les thumbnails manquantes.</p></div>
-          </div>
-          <div class="card-actions"><button class="btn btn-primary" id="btn-gen-thumbs" data-i18n="dash.thumbs_start">▶ Générer</button></div>
-          <div id="thumbs-progress" class="progress-wrap hidden">
-            <div class="progress-bar"><div class="progress-fill" id="thumbs-bar"></div></div>
-            <span id="thumbs-detail"></span>
-          </div>
-        </div>
 
         <div class="admin-card">
           <div class="card-header">

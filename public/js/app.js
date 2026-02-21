@@ -127,10 +127,6 @@
     loadInitialLogs();
     loadDashboard();
     loadFolders();
-    checkScanOnLoad();
-    checkSyncOnLoad();
-    checkEnrichOnLoad();
-    checkThumbsOnLoad();
     // Restore last active tab, default to dashboard
     const savedTab = localStorage.getItem('enc_activeTab') || 'dashboard';
     switchTab(savedTab);
@@ -342,195 +338,7 @@
     } catch {}
   }
 
-  /* ── Scan progress ────────────────────────────────────── */
-  let scanPollTimer = null;
 
-  $('#btn-scan').addEventListener('click', async () => {
-    try {
-      await api('/scan', { method: 'POST' });
-      toast(t('toast.scan_started'), 'success');
-      startScanPoll();
-    } catch (e) { toast(e.message, 'error'); }
-  });
-
-  $('#btn-scan-cancel').addEventListener('click', async () => {
-    try {
-      await api('/scan/cancel', { method: 'POST' });
-      toast(t('toast.cancel_requested'), 'warn');
-    } catch (e) { toast(e.message, 'error'); }
-  });
-
-  function startScanPoll() {
-    if (scanPollTimer) return;
-    const wrap = $('#scan-progress');
-    const bar = $('#scan-bar');
-    const detail = $('#scan-detail');
-    const btnScan = $('#btn-scan');
-    const btnCancel = $('#btn-scan-cancel');
-
-    wrap.classList.remove('hidden');
-    btnCancel.classList.remove('hidden');
-    btnScan.disabled = true;
-
-    scanPollTimer = setInterval(async () => {
-      try {
-        const s = await api('/scan/progress');
-        if (s.running) {
-          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
-          bar.style.width = pct + '%';
-          detail.textContent = t('scan.progress', {done:s.done, total:s.total, folder:s.currentFolder||'…', skipped:s.skipped, errors:s.errors});
-        } else {
-          clearInterval(scanPollTimer);
-          scanPollTimer = null;
-          bar.style.width = '100%';
-          detail.textContent = s.cancelled ? t('scan.cancelled') : t('scan.done', {total:s.total, errors:s.errors});
-          btnCancel.classList.add('hidden');
-          btnScan.disabled = false;
-          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
-          loadDashboard();
-        }
-      } catch { clearInterval(scanPollTimer); scanPollTimer = null; btnScan.disabled = false; }
-    }, 1000);
-  }
-
-  // Check scan on load (called from showApp)
-  function checkScanOnLoad() {
-    api('/scan/progress').then(s => { if (s.running) startScanPoll(); }).catch(() => {});
-  }
-
-  /* ── Sync DB ───────────────────────────────────────────── */
-  let syncPollTimer = null;
-
-  $('#btn-sync').addEventListener('click', async () => {
-    try {
-      await api('/sync', { method: 'POST' });
-      toast(t('toast.sync_started'), 'success');
-      startSyncPoll();
-    } catch (e) { toast(e.message, 'error'); }
-  });
-
-  function startSyncPoll() {
-    if (syncPollTimer) return;
-    const wrap = $('#sync-progress');
-    const bar = $('#sync-bar');
-    const detail = $('#sync-detail');
-    const btn = $('#btn-sync');
-
-    wrap.classList.remove('hidden');
-    btn.disabled = true;
-
-    syncPollTimer = setInterval(async () => {
-      try {
-        const s = await api('/sync/progress');
-        if (s.running) {
-          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
-          bar.style.width = pct + '%';
-          detail.textContent = t('sync.progress', {done:s.done, total:s.total, removed:s.removed, added:s.added, errors:s.errors});
-        } else {
-          clearInterval(syncPollTimer);
-          syncPollTimer = null;
-          bar.style.width = '100%';
-          detail.textContent = t('sync.done', {removed:s.removed, added:s.added, errors:s.errors});
-          btn.disabled = false;
-          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 5000);
-          loadDashboard();
-          loadFolders();
-        }
-      } catch { clearInterval(syncPollTimer); syncPollTimer = null; btn.disabled = false; }
-    }, 1000);
-  }
-
-  function checkSyncOnLoad() {
-    api('/sync/progress').then(s => { if (s.running) startSyncPoll(); }).catch(() => {});
-  }
-
-  /* ── Enrich / Thumbs ──────────────────────────────────── */
-  let enrichPollTimer = null;
-  let thumbsPollTimer = null;
-
-  $('#btn-enrich').addEventListener('click', async () => {
-    try {
-      await api('/enrich', { method: 'POST' });
-      toast(t('toast.enrich_started'), 'success');
-      startEnrichPoll();
-    } catch (e) { toast(e.message, 'error'); }
-  });
-
-  $('#btn-gen-thumbs').addEventListener('click', async () => {
-    try {
-      await api('/thumbs', { method: 'POST' });
-      toast(t('toast.thumbs_started'), 'success');
-      startThumbsPoll();
-    } catch (e) { toast(e.message, 'error'); }
-  });
-
-  function startEnrichPoll() {
-    if (enrichPollTimer) return;
-    const wrap = $('#enrich-progress');
-    const bar = $('#enrich-bar');
-    const detail = $('#enrich-detail');
-    const btn = $('#btn-enrich');
-
-    wrap.classList.remove('hidden');
-    btn.disabled = true;
-
-    enrichPollTimer = setInterval(async () => {
-      try {
-        const s = await api('/enrich/progress');
-        if (s.running) {
-          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
-          bar.style.width = pct + '%';
-          detail.textContent = t('enrich.progress', {done:s.done, total:s.total, errors:s.errors});
-        } else {
-          clearInterval(enrichPollTimer);
-          enrichPollTimer = null;
-          bar.style.width = '100%';
-          detail.textContent = t('enrich.done', {total:s.total, errors:s.errors});
-          btn.disabled = false;
-          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
-          loadDashboard();
-        }
-      } catch { clearInterval(enrichPollTimer); enrichPollTimer = null; btn.disabled = false; }
-    }, 1000);
-  }
-
-  function startThumbsPoll() {
-    if (thumbsPollTimer) return;
-    const wrap = $('#thumbs-progress');
-    const bar = $('#thumbs-bar');
-    const detail = $('#thumbs-detail');
-    const btn = $('#btn-gen-thumbs');
-
-    wrap.classList.remove('hidden');
-    btn.disabled = true;
-
-    thumbsPollTimer = setInterval(async () => {
-      try {
-        const s = await api('/thumbs/progress');
-        if (s.running) {
-          const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
-          bar.style.width = pct + '%';
-          detail.textContent = t('thumbs.progress', {done:s.done, total:s.total, errors:s.errors});
-        } else {
-          clearInterval(thumbsPollTimer);
-          thumbsPollTimer = null;
-          bar.style.width = '100%';
-          detail.textContent = t('thumbs.done', {total:s.total, errors:s.errors});
-          btn.disabled = false;
-          setTimeout(() => { wrap.classList.add('hidden'); bar.style.width = '0'; }, 4000);
-          loadDashboard();
-        }
-      } catch { clearInterval(thumbsPollTimer); thumbsPollTimer = null; btn.disabled = false; }
-    }, 1000);
-  }
-
-  // Check enrich/thumbs on load (resume progress bars if running)
-  function checkEnrichOnLoad() {
-    api('/enrich/progress').then(s => { if (s.running) startEnrichPoll(); }).catch(() => {});
-  }
-  function checkThumbsOnLoad() {
-    api('/thumbs/progress').then(s => { if (s.running) startThumbsPoll(); }).catch(() => {});
-  }
 
   /* ── Clear DB ──────────────────────────────────────────── */
   $('#btn-clear-db').addEventListener('click', async () => {
@@ -1370,8 +1178,6 @@
         toast(t('toast.source_added'), 'success');
         loadSources();
         loadDashboard();
-        // Auto-pipeline runs server-side; poll scan progress
-        setTimeout(() => { checkScanOnLoad(); }, 1500);
       } catch (e) {
         const msg = (e.message || '').includes('already') ? t('toast.source_duplicate') : e.message;
         toast(msg, 'error');
