@@ -31,7 +31,17 @@ app.use(helmet({
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-const apiLimiter = rateLimit({ windowMs: 60_000, max: 600, standardHeaders: true, legacyHeaders: false });
+const apiLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 1200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Don't count thumbnails, SSE events, or static assets against the limit
+  skip: (req) => {
+    const p = req.path;
+    return p.startsWith('/api/thumb/') || p.startsWith('/api/events');
+  },
+});
 
 /* ─── Static files ────────────────────────────────────────── */
 app.use(express.static(path.join(__dirname, 'public')));

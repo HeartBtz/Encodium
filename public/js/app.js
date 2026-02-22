@@ -31,25 +31,220 @@
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
   const $$ = (sel, ctx) => [...(ctx || document).querySelectorAll(sel)];
 
+  /* ── Debug / Network diagnostics ────────────────────── */
+  const _netLog = [];          // circular buffer of recent requests
+  const NET_LOG_MAX = 100;
+  let _activeRequests = 0;
+  let _totalRequests = 0;
+  let _totalErrors = 0;
+
+  function _ts() { return new Date().toLocaleTimeString('fr-FR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 }); }
+
+  function _logNet(entry) {
+    if (_netLog.length >= NET_LOG_MAX) _netLog.shift();
+    _netLog.push(entry);
+    _updateDebugPanel();
+  }
+
+  /** Dump diagnostics to console — callable from DevTools: _encodiumDebug() */
+  window._encodiumDebug = function () {
+    console.group('%c[Encodium Network Diagnostics]', 'color:#0af;font-weight:bold');
+    console.log('Active requests:', _activeRequests);
+    console.log('Total requests:', _totalRequests, '| Total errors:', _totalErrors);
+    console.log('SSE state:', sse ? ['CONNECTING','OPEN','CLOSED'][sse.readyState] : 'null', '| retries:', sseRetries);
+    console.table(_netLog.slice(-30).map(e => ({
+      time: e.time, method: e.method, path: e.path, status: e.status,
+      ms: e.duration, error: e.error || '', retry: e.retry || 0
+    })));
+    console.groupEnd();
+    return { active: _activeRequests, total: _totalRequests, errors: _totalErrors, log: _netLog.slice() };
+  };
+
+  /* ── Debug overlay panel (toggle with Ctrl+Shift+D) ──── */
+  let _debugPanel = null;
+  let _debugVisible = false;
+
+  function _initDebugPanel() {
+    const panel = document.createElement('div');
+    panel.id = 'enc-debug-panel';
+    panel.innerHTML = `
+      <div id="enc-debug-header">
+        <span>🔍 Encodium Net Debug</span>
+        <span id="enc-debug-stats"></span>
+        <button id="enc-debug-close" title="Fermer (Ctrl+Shift+D)">✕</button>
+      </div>
+      <div id="enc-debug-body"></div>`;
+    document.body.appendChild(panel);
+    _debugPanel = panel;
+    panel.style.display = 'none';
+
+    // Inject styles
+    const style = document.createElement('style');
+    style.textContent = `
+      #enc-debug-panel { position:fixed; bottom:0; right:0; width:520px; max-height:340px;
+        background:#1a1a2e; color:#e0e0e0; font-family:monospace; font-size:11px;
+        border-top:2px solid #0af; border-left:2px solid #0af; border-radius:8px 0 0 0;
+        z-index:99999; display:flex; flex-direction:column; box-shadow:0 -2px 20px rgba(0,0,0,.5); }
+      #enc-debug-header { display:flex; align-items:center; justify-content:space-between;
+        padding:4px 10px; background:#0d0d1a; border-bottom:1px solid #333; gap:10px; flex-shrink:0; }
+      #enc-debug-header span:first-child { font-weight:bold; color:#0af; }
+      #enc-debug-stats { color:#aaa; flex:1; text-align:center; }
+      #enc-debug-close { background:none; border:none; color:#f55; cursor:pointer; font-size:14px; padding:2px 6px; }
+      #enc-debug-body { overflow-y:auto; padding:4px 8px; flex:1; }
+      .enc-dl { display:flex; gap:6px; padding:1px 0; border-bottom:1px solid #222; align-items:baseline; }
+      .enc-dl.enc-err { color:#f55; }
+      .enc-dl.enc-slow { color:#f80; }
+      .enc-dl .dl-time { color:#666; width:85px; flex-shrink:0; }
+      .enc-dl .dl-method { width:36px; flex-shrink:0; color:#0af; }
+      .enc-dl .dl-path { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .enc-dl .dl-status { width:55px; flex-shrink:0; text-align:right; }
+      .enc-dl .dl-ms { width:50px; flex-shrink:0; text-align:right; color:#888; }
+      .enc-dl .dl-err { color:#f55; margin-left:4px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    `;
+    document.head.appendChild(style);
+
+    document.getElementById('enc-debug-close').addEventListener('click', () => _toggleDebugPanel());
+  }
+
+  function _toggleDebugPanel() {
+    if (!_debugPanel) _initDebugPanel();
+    _debugVisible = !_debugVisible;
+    _debugPanel.style.display = _debugVisible ? 'flex' : 'none';
+    if (_debugVisible) _updateDebugPanel();
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey && e.shiftKey && e.key === 'D') { e.preventDefault(); _toggleDebugPanel(); }
+  });
+
+  function _updateDebugPanel() {
+    if (!_debugVisible || !_debugPanel) return;
+    const statsEl = document.getElementById('enc-debug-stats');
+    const bodyEl = document.getElementById('enc-debug-body');
+    if (!statsEl || !bodyEl) return;
+
+    const sseState = sse ? ['CONNECTING','OPEN','CLOSED'][sse.readyState] : 'null';
+    statsEl.textContent = `Active: ${_activeRequests} | Errors: ${_totalErrors} | SSE: ${sseState} (r${sseRetries})`;
+
+    const last30 = _netLog.slice(-40);
+    bodyEl.innerHTML = last30.map(e => {
+      const cls = e.error ? 'enc-err' : (e.duration > 3000 ? 'enc-slow' : '');
+      const statusColor = e.status === 200 ? '#4c4' : (typeof e.status === 'number' && e.status >= 400 ? '#f55' : '#f80');
+      return `<div class="enc-dl ${cls}">
+        <span class="dl-time">${e.time}</span>
+        <span class="dl-method">${e.method}</span>
+        <span class="dl-path" title="${e.path}">${e.path}</span>
+        <span class="dl-status" style="color:${statusColor}">${e.status}</span>
+        <span class="dl-ms">${e.duration}ms</span>
+        ${e.error ? `<span class="dl-err" title="${e.error}">${e.error}</span>` : ''}
+      </div>`;
+    }).join('');
+
+    bodyEl.scrollTop = bodyEl.scrollHeight;
+  }
+
+  /* ── Proxy / CORS session detection ───────────────────── */
+  let _proxyReloadPending = false;
+
+  function _handleProxyAuthExpired(reqId, path, ms) {
+    if (_proxyReloadPending) return; // already handling it
+    _proxyReloadPending = true;
+    _logNet({ time: _ts(), method: 'PROXY', path, status: 'AUTH_EXPIRED', duration: ms, error: 'Coder session expired → reloading' });
+    console.error(`[NET #${reqId}] ✖ Proxy auth expired (CORS redirect detected) — reloading page in 3s…`);
+    toast('⚠️ Session proxy expirée — rechargement automatique…', 'error');
+    setTimeout(() => { window.location.reload(); }, 3000);
+  }
+
   function api(path, opts = {}, _retry = 0) {
+    const method = (opts.method || 'GET').toUpperCase();
+    const t0 = performance.now();
+    const reqId = ++_totalRequests;
+    _activeRequests++;
+    if (_retry === 0) {
+      console.debug(`%c[NET #${reqId}] → ${method} /api${path}`, 'color:#888');
+    } else {
+      console.warn(`%c[NET #${reqId}] ↻ RETRY ${_retry} ${method} /api${path}`, 'color:#f80');
+    }
+
     const headers = { 'Content-Type': 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
     return fetch(`/api${path}`, { ...opts, headers })
       .then(async r => {
-        if (r.status === 401) { logout(); throw new Error(t('error.session_expired')); }
+        const ms = Math.round(performance.now() - t0);
+        _activeRequests--;
+
+        // Detect proxy redirect: if the response URL is on a different origin,
+        // the reverse proxy (Coder) redirected us to its auth page.
+        if (r.url && new URL(r.url).origin !== window.location.origin) {
+          _handleProxyAuthExpired(reqId, path, ms);
+          throw new Error('Proxy auth redirect');
+        }
+        // Also detect opaque redirect (type === 'opaqueredirect')
+        if (r.type === 'opaqueredirect') {
+          _handleProxyAuthExpired(reqId, path, ms);
+          throw new Error('Proxy auth redirect');
+        }
+
+        if (r.status === 401) {
+          _logNet({ time: _ts(), method, path, status: 401, duration: ms, error: 'session expired' });
+          console.warn(`[NET #${reqId}] ← 401 (${ms}ms) ${path}`);
+          logout(); throw new Error(t('error.session_expired'));
+        }
         let j;
-        try { j = await r.json(); } catch { throw new Error(t('error.invalid_response', {status: r.status})); }
-        if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
+        try { j = await r.json(); } catch {
+          _totalErrors++;
+          _logNet({ time: _ts(), method, path, status: r.status, duration: ms, error: 'invalid JSON' });
+          console.error(`[NET #${reqId}] ← ${r.status} INVALID JSON (${ms}ms) ${path}`);
+          throw new Error(t('error.invalid_response', {status: r.status}));
+        }
+        if (!r.ok) {
+          _totalErrors++;
+          const errMsg = j.error || `HTTP ${r.status}`;
+          _logNet({ time: _ts(), method, path, status: r.status, duration: ms, error: errMsg });
+          console.error(`[NET #${reqId}] ← ${r.status} (${ms}ms) ${path}: ${errMsg}`);
+          throw new Error(errMsg);
+        }
+        _logNet({ time: _ts(), method, path, status: r.status, duration: ms });
+        if (ms > 3000) {
+          console.warn(`[NET #${reqId}] ← ${r.status} SLOW (${ms}ms) ${path}`);
+        } else {
+          console.debug(`%c[NET #${reqId}] ← ${r.status} (${ms}ms) ${path}`, 'color:#888');
+        }
         return j;
       })
       .catch(err => {
-        if (err.message === t('error.session_expired')) throw err;
+        const ms = Math.round(performance.now() - t0);
+        if (err.message === t('error.session_expired') || err.message === 'Proxy auth redirect') throw err;
+        // Only TypeError means the fetch itself failed (network level).
+        // HTTP errors (4xx/5xx) already decremented _activeRequests in .then().
+        if (err.name !== 'TypeError') throw err;
+
+        // Detect Coder proxy CORS redirect: multiple consecutive TypeErrors
+        // strongly suggest the reverse proxy session expired and is redirecting
+        // to an external auth page, causing CORS blocks.
+        if (!window._corsErrorCount) window._corsErrorCount = 0;
+        window._corsErrorCount++;
+        // If 3+ network errors within a short window → almost certainly proxy auth
+        if (window._corsErrorCount >= 3) {
+          _activeRequests--;
+          _handleProxyAuthExpired(reqId, path, ms);
+          throw new Error('Proxy auth redirect');
+        }
+        // Reset counter after 10s of no errors
+        clearTimeout(window._corsErrorResetTimer);
+        window._corsErrorResetTimer = setTimeout(() => { window._corsErrorCount = 0; }, 10000);
+
         // Retry once on network errors (server restart, brief outage)
-        if (err.name === 'TypeError' && _retry < 1) {
+        if (_retry < 1) {
+          _logNet({ time: _ts(), method, path, status: 'NET_ERR', duration: ms, error: err.message, retry: 1 });
+          console.warn(`[NET #${reqId}] ✖ NETWORK ERROR (${ms}ms) ${path}: ${err.message} — retrying in 2s…`);
           return new Promise(r => setTimeout(r, 2000)).then(() => api(path, opts, _retry + 1));
         }
-        if (err.name === 'TypeError') throw new Error(t('error.server_unreachable'));
-        throw err;
+        _activeRequests--;
+        _totalErrors++;
+        _logNet({ time: _ts(), method, path, status: 'NET_ERR', duration: ms, error: err.message, retry: _retry });
+        console.error(`[NET #${reqId}] ✖ NETWORK FAILURE after ${_retry + 1} attempts (${ms}ms) ${path}: ${err.message}`);
+        throw new Error(t('error.server_unreachable') + ` [${path}]`);
       });
   }
 
@@ -129,13 +324,15 @@
     connectSSE();
     startQueuePoll();
     loadInitialLogs();
-    loadDashboard();
-    loadFolders();
     // Restore last active tab, default to dashboard
     const savedTab = localStorage.getItem('enc_activeTab') || 'dashboard';
+    // loadDashboard + loadFolders are already triggered by switchTab for relevant tabs
+    // Only load dashboard explicitly if switching to a tab that doesn't call it
+    if (savedTab !== 'library') loadDashboard();
+    loadFolders();
     switchTab(savedTab);
-    // Always pre-load encode queue so SSE progress updates work after refresh
-    loadEncodeQueue();
+    // Pre-load encode queue (for SSE progress) — but switchTab('library') already does it
+    if (savedTab !== 'library') loadEncodeQueue();
   }
 
   function logout() {
@@ -176,12 +373,16 @@
   function connectSSE() {
     if (sse) sse.close();
     if (!token) return;
+    console.info(`[SSE] Connecting… (attempt ${sseRetries + 1})`);
     sse = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
     sse.addEventListener('connected', () => {
-      // If reconnecting after a drop, refresh app state
+      console.info(`[SSE] ✓ Connected (after ${sseRetries} retries)`);
+      _logNet({ time: _ts(), method: 'SSE', path: '/events', status: 'OPEN', duration: 0 });
+      // If reconnecting after a drop, refresh only current tab data
       if (sseRetries > 0) {
-        loadDashboard();
-        loadLibrary();
+        const activeTab = localStorage.getItem('enc_activeTab') || 'dashboard';
+        if (activeTab === 'dashboard') loadDashboard();
+        else if (activeTab === 'library') loadLibrary();
         loadEncodeQueue();
       }
       sseRetries = 0;
@@ -198,11 +399,28 @@
     sse.addEventListener('pipeline_status', e => {
       try { handlePipelineStatus(JSON.parse(e.data)); } catch {}
     });
-    sse.onerror = () => {
+    sse.onerror = (ev) => {
+      const state = ['CONNECTING','OPEN','CLOSED'][sse.readyState] || sse.readyState;
+      console.warn(`[SSE] ✖ Error — readyState=${state}`);
+      _logNet({ time: _ts(), method: 'SSE', path: '/events', status: 'ERROR', duration: 0, error: `readyState=${state}, retry=${sseRetries + 1}` });
       sse.close(); sse = null;
       sseRetries++;
+
+      // If SSE fails quickly AND we have CORS network errors → proxy auth expired
+      if (sseRetries >= 2 && window._corsErrorCount >= 2) {
+        _handleProxyAuthExpired(0, '/events (SSE)', 0);
+        return;
+      }
+
       if (token && sseRetries < 10) {
-        setTimeout(() => connectSSE(), Math.min(sseRetries * 3000, 30000));
+        const delay = Math.min(sseRetries * 3000, 30000);
+        console.info(`[SSE] Reconnecting in ${delay / 1000}s (retry ${sseRetries}/10)…`);
+        setTimeout(() => connectSSE(), delay);
+      } else if (sseRetries >= 10) {
+        console.error('[SSE] ✖ Gave up after 10 retries — likely proxy auth expired');
+        _logNet({ time: _ts(), method: 'SSE', path: '/events', status: 'DEAD', duration: 0, error: 'gave up after 10 retries' });
+        // Last resort: if 10 SSE retries failed, reload the page
+        _handleProxyAuthExpired(0, '/events (SSE final)', 0);
       }
     };
   }
@@ -239,6 +457,7 @@
     $$('.sidenav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     $$('.admin-tab').forEach(s => s.classList.toggle('active', s.id === `tab-${tab}`));
     localStorage.setItem('enc_activeTab', tab);
+    if (tab === 'dashboard') loadDashboard();
     if (tab === 'library') { loadLibrary(); loadEncodeQueue(); }
     if (tab === 'hardware') loadHardware();
     if (tab === 'logs') renderLogs();
@@ -446,9 +665,10 @@
       return `
         <div class="mb-card ${sel ? 'mb-selected' : ''}" data-id="${v.id}">
           <input type="checkbox" class="mb-card-cb" ${sel ? 'checked' : ''}>
-          <div class="mb-card-thumb">
-            <img src="/api/thumb/${v.id}?token=${encodeURIComponent(token)}"
-                 onerror="this.dataset.retries=(this.dataset.retries|0);if(this.dataset.retries<2){this.dataset.retries++;setTimeout(()=>{this.src='/api/thumb/${v.id}?token=${encodeURIComponent(token)}&t='+Date.now()},4000*this.dataset.retries)}else{this.onerror=null;this.src='/img/no-thumb.svg'}"
+          <div class="mb-card-thumb" id="thumb-wrap-${v.id}">
+            <div class="mb-thumb-spinner"></div>
+            <img data-thumb-id="${v.id}"
+                 src="/api/thumb/${v.id}?token=${encodeURIComponent(token)}"
                  loading="lazy">
             <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="Lire">▶</button>
           </div>
@@ -460,6 +680,32 @@
           </div>
         </div>`;
     }).join('');
+
+    // Thumbnail load/error handler — retry with backoff, then fallback
+    $$('img[data-thumb-id]', grid).forEach(img => {
+      let retries = 0;
+      const vid = img.dataset.thumbId;
+      const wrap = img.closest('.mb-card-thumb');
+
+      img.addEventListener('load', () => {
+        // 202 JSON responses won't trigger 'load' on img (they trigger 'error')
+        img.classList.add('thumb-loaded');
+        wrap.classList.add('thumb-ready');
+      });
+
+      img.addEventListener('error', () => {
+        if (retries < 2) {
+          retries++;
+          setTimeout(() => {
+            img.src = `/api/thumb/${vid}?token=${encodeURIComponent(token)}&t=${Date.now()}`;
+          }, 4000 * retries);
+        } else {
+          img.src = '/img/no-thumb.svg';
+          img.classList.add('thumb-failed');
+          wrap.classList.add('thumb-ready');
+        }
+      });
+    });
 
     // Click to select
     const cards = $$('.mb-card', grid);
@@ -667,7 +913,7 @@
   let _eqPollTimer = null;
   function startQueuePoll() {
     if (_eqPollTimer) return;
-    _eqPollTimer = setInterval(() => loadEncodeQueue(), 15000);
+    _eqPollTimer = setInterval(() => loadEncodeQueue(), 30000);
   }
   function stopQueuePoll() {
     if (_eqPollTimer) { clearInterval(_eqPollTimer); _eqPollTimer = null; }
