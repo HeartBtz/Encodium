@@ -142,7 +142,7 @@ router.get('/thumbs/progress', requireAuth, (req, res) => {
 router.get('/videos', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
-    const FAIL_EXISTS_SQL = "EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status IN ('error','failed'))";
+    const FAIL_EXISTS_SQL = "(EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status = 'error') AND NOT EXISTS (SELECT 1 FROM encode_jobs ej2 WHERE ej2.video_id = v.id AND ej2.status = 'done'))";
     const {
       q = '',              // search query (filename / folder)
       folder = '',         // exact folder filter
@@ -215,7 +215,7 @@ router.get('/videos', requireAuth, async (req, res) => {
 router.get('/videos/ids', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
-    const FAIL_EXISTS_SQL = "EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status IN ('error','failed'))";
+    const FAIL_EXISTS_SQL = "(EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status = 'error') AND NOT EXISTS (SELECT 1 FROM encode_jobs ej2 WHERE ej2.video_id = v.id AND ej2.status = 'done'))";
     const { q = '', folder = '', codec = '', skip = '', fail = '' } = req.query;
     const where = [];
     const params = [];
