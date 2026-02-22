@@ -6,26 +6,30 @@
 
 ## Screenshots
 
-| Library & Dashboard | Encoding Queue |
+| Dashboard & Menu | Library |
 |---|---|
-| ![Library](Screenshots/Encodium_menu.png) | ![Encoding](Screenshots/Encodium_encodage.png) |
+| ![Dashboard](Screenshots/encodium_menu1.png) | ![Library](Screenshots/encodium_bibliotheque.png) |
 
-| Library (alternate view) | Logs |
+| Library (alternate view) | Hardware Detection |
 |---|---|
-| ![Library 2](Screenshots/encodium_menu2.png) | ![Logs](Screenshots/Encodium_logs.png) |
+| ![Library 2](Screenshots/encodium_bibliotheque2.png) | ![Hardware](Screenshots/encodium_materiel.png) |
+
+<p align="center">
+  <img src="Screenshots/encodium_menu2.png" alt="Settings" width="70%">
+</p>
 
 ## Features
 
 ### Core
 - **Multi-Source Media Library** — Add multiple source directories via a built-in file browser UI; fully DB-backed
-- **Auto-Scan & Sync** — Real-time file watchers (`fs.watch`) + configurable periodic sync (5 / 15 / 30 / 60 / 360 min); no manual scan needed
+- **Auto-Scan & Sync** — Real-time file watchers (`fs.watch`) + configurable periodic sync (5 / 15 / 30 / 60 / 360 min); scanning is fully automatic, no manual intervention needed
 - **Video Library** — Browse, search, filter by filename, folder, codec, resolution, size, duration, and skip status
 - **Video Streaming** — HTML5 player with HTTP range-request support, directly from the UI
 - **Hardware Detection** — Auto-detects NVIDIA NVENC, AMD/Intel VA-API, Intel QSV, and CPU encoders
 - **Batch Encoding** — Select multiple videos, encode with H.265/HEVC or AV1 using detected presets
 - **Multi-GPU Support** — Automatic load-balanced distribution across multiple GPUs
 - **Metadata Enrichment** — Automatic ffprobe extraction of codec, resolution, duration, HDR, audio info
-- **Thumbnail Generation** — On-demand thumbnail generation when browsing the library (non-blocking, generated in background with shimmer skeleton placeholder)
+- **Thumbnail Generation** — On-demand thumbnail generation when browsing the library; non-blocking (HTTP 202 + background ffmpeg), shimmer skeleton placeholder with smooth fade-in
 
 ### Encoding Engine
 - **Size Guard** — Rejects encodes that are larger than the original, keeping the source intact
@@ -53,7 +57,7 @@
 - **Webhook Notifications** — Discord and generic HTTP webhook at queue completion
 
 ### UI & Monitoring
-- **Real-time Updates** — SSE-powered live progress for encoding jobs, pipeline status, and log streaming; dashboard auto-refreshes when scans complete
+- **Real-time Updates** — SSE-powered live progress for encoding jobs, pipeline status, and log streaming; only the active tab refreshes on reconnect
 - **Stats Dashboard** — Video count, total size, duration, codec distribution, encoding savings
 - **Encoding Charts** — Daily savings history and before/after size comparison (Chart.js)
 - **File Browser** — Server-side directory browser for adding media source directories (admin only)
@@ -63,6 +67,7 @@
 - **Dark Theme** — Responsive single-page application
 - **Internationalization** — 14 languages (EN, FR, DE, ES, IT, PT, NL, PL, RU, TR, AR, JA, KO, ZH)
 - **Authentication** — JWT-based login with admin/member roles
+- **Frontend Diagnostics** — All API calls logged in the browser console with timing; `Ctrl+Shift+D` opens a live debug overlay; `_encodiumDebug()` in DevTools prints the full request history
 
 ## Requirements
 
@@ -344,7 +349,7 @@ Migrations run automatically on startup via `db.initSchema()`.
 
 ### v1.4.0
 - **Multi-source media directories** — Replace single `MEDIA_DIR` with a file-browser UI + DB-backed source management
-- **Auto-scan pipeline** — Real-time file watchers (`fs.watch`, 8s debounce) + configurable periodic sync; scan → enrich → thumbs runs automatically when sources change
+- **Auto-scan pipeline** — Real-time file watchers (`fs.watch`, 8s debounce) + configurable periodic sync; scan → enrich runs automatically when sources change (thumbnails generated on-demand)
 - **SSE pipeline events** — Dashboard and library auto-refresh when background scan/enrich/thumbs complete; no page reload needed
 - **Pipeline queueing** — Adding a source while a pipeline is already running queues the scan and executes it automatically after the current one finishes
 - **Source purge** — Removing a source directory also purges all its indexed videos and thumbnails
