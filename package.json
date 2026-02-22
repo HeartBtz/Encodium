@@ -1,6 +1,6 @@
 {
   "name": "encodium",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Encodium — Standalone video encoding & library management",
   "main": "server.js",
   "scripts": {
