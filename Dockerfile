@@ -48,6 +48,6 @@ EXPOSE 4000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://localhost:${PORT}/api/stats').then(r=>{if(!r.ok)throw r;process.exit(0)}).catch(()=>process.exit(1))" || exit 1
+  CMD node -e "fetch('http://localhost:${PORT}/').then(r=>{if(!r.ok)throw r;process.exit(0)}).catch(()=>process.exit(1))" || exit 1
 
 CMD ["node", "server.js"]

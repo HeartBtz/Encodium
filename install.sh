@@ -421,6 +421,18 @@ create_admin() {
   log "Creating admin account & initializing schema…"
   cd "$SCRIPT_DIR"
 
+  local ADMIN_EMAIL_EFFECTIVE
+  local ADMIN_PASS_EFFECTIVE
+  ADMIN_EMAIL_EFFECTIVE="${ADMIN_EMAIL:-admin@encodium.local}"
+  if [[ -n "${ADMIN_PASS:-}" ]]; then
+    ADMIN_PASS_EFFECTIVE="$ADMIN_PASS"
+  else
+    ADMIN_PASS_EFFECTIVE="$(rand_string 20)"
+  fi
+
+  export ADMIN_EMAIL="$ADMIN_EMAIL_EFFECTIVE"
+  export ADMIN_PASS="$ADMIN_PASS_EFFECTIVE"
+
   # Source .env vars
   set -a
   # shellcheck disable=SC1091
@@ -438,16 +450,20 @@ const db = require('./db');
     await db.initSchema();
     console.log('[encodium] Schema initialized');
 
-    const email = process.env.ADMIN_EMAIL || 'admin@encodium.local';
-    const pass  = process.env.ADMIN_PASS  || 'admin';
+    const email = process.env.ADMIN_EMAIL;
+    const pass  = process.env.ADMIN_PASS;
+    if (!email || !pass) {
+      console.error('[encodium] ADMIN_EMAIL/ADMIN_PASS are required');
+      process.exit(1);
+    }
     const existing = await db.getUserByEmail(email);
     if (existing) {
-      console.log('[encodium] Admin already exists: ' + email);
+      console.log('__ADMIN_EXISTS__:' + email);
       process.exit(0);
     }
     const hash = await bcrypt.hash(pass, 12);
     await db.createUser('Admin', email, hash, 'admin');
-    console.log('[encodium] Admin created: ' + email);
+    console.log('__ADMIN_CREATED__:' + email);
     process.exit(0);
   } catch (e) {
     console.error('[encodium] Admin creation error:', e.message);
@@ -456,9 +472,26 @@ const db = require('./db');
 })();
 ENDJS
 
-  node "$TMPJS"
+  local NODE_OUT
+  if ! NODE_OUT="$(node "$TMPJS" 2>&1)"; then
+    rm -f "$TMPJS"
+    echo "$NODE_OUT"
+    die "Admin creation failed"
+  fi
+
+  echo "$NODE_OUT"
   rm -f "$TMPJS"
-  ok "Schema initialized, admin account ready (admin@encodium.local / admin)"
+
+  if echo "$NODE_OUT" | grep -q "__ADMIN_CREATED__"; then
+    export INSTALL_ADMIN_STATUS="created"
+    export INSTALL_ADMIN_EMAIL="$ADMIN_EMAIL_EFFECTIVE"
+    export INSTALL_ADMIN_PASS="$ADMIN_PASS_EFFECTIVE"
+    ok "Schema initialized, admin account created ($ADMIN_EMAIL_EFFECTIVE)"
+  else
+    export INSTALL_ADMIN_STATUS="existing"
+    export INSTALL_ADMIN_EMAIL="$ADMIN_EMAIL_EFFECTIVE"
+    ok "Schema initialized, admin account already exists ($ADMIN_EMAIL_EFFECTIVE)"
+  fi
 }
 
 # ─── PM2 setup ─────────────────────────────────────────────
@@ -667,7 +700,11 @@ main() {
   echo -e "${GREEN}${BOLD}  ══════════════════════════════════════════════${NC}"
   echo ""
   echo -e "  ${BOLD}URL${NC}      http://localhost:${APP_PORT}"
-  echo -e "  ${BOLD}Login${NC}    admin@encodium.local / admin"
+  if [[ "${INSTALL_ADMIN_STATUS:-}" == "created" ]]; then
+    echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / ${INSTALL_ADMIN_PASS}"
+  else
+    echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / (mot de passe existant conservé)"
+  fi
   echo ""
   echo -e "  ${CYAN}PM2 commands:${NC}"
   echo "    pm2 status              Show processes"

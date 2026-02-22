@@ -754,7 +754,7 @@ router.post('/settings/sources', requireAdmin, async (req, res) => {
       throw addErr;
     }
     res.json(source);
-    // Auto-scan the new source in background (scan + enrich + thumbs)
+    // Auto-scan the new source in background (scan + enrich)
     const watcher = require('../services/watcher');
     watcher.refreshWatchers().catch(() => {});
     watcher.runFullPipeline('source added').catch(() => {});

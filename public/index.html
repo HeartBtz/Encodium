@@ -23,10 +23,10 @@
         <input type="email" id="login-email" class="input" placeholder="admin@example.com" required autocomplete="email">
       </div>
       <div class="form-group">
-        <label for="login-pass" data-i18n="login.password">Mot de passe</label>
+        <label for="login-pass" data-i18n="login.password">Password</label>
         <input type="password" id="login-pass" class="input" placeholder="••••••••" required autocomplete="current-password">
       </div>
-      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" data-i18n="login.submit">Connexion</button>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;margin-top:8px" data-i18n="login.submit">Login</button>
       <p id="login-error" class="alert alert-error" style="display:none;margin-top:12px"></p>
     </form>
   </div>
@@ -44,7 +44,7 @@
     <div class="admin-nav-right">
       <select id="lang-select" class="input" style="width:auto;padding:2px 6px;font-size:12px;margin-right:8px"></select>
       <span id="adminUser" class="admin-user-badge"></span>
-      <button class="btn btn-ghost btn-sm btn-danger-text" id="btn-logout" data-i18n="nav.logout">Déconnexion</button>
+      <button class="btn btn-ghost btn-sm btn-danger-text" id="btn-logout" data-i18n="nav.logout">Logout</button>
     </div>
   </nav>
 
@@ -78,7 +78,7 @@
 
       <!-- DASHBOARD -->
       <section id="tab-dashboard" class="admin-tab active">
-        <div class="tab-title-row"><h2>Tableau de bord</h2></div>
+        <div class="tab-title-row"><h2 data-i18n="nav.dashboard">Dashboard</h2></div>
         <div class="stats-grid">
           <div class="stat-card stat-blue">
             <div class="stat-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M10 8l6 4-6 4V8z"/></svg></div>
