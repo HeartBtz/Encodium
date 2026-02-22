@@ -636,6 +636,7 @@
       const folder = $('#lib-folder').value;
       const codec = $('#lib-codec').value;
       const skip = $('#lib-skip').value;
+      const fail = $('#lib-fail').value;
       const sort = $('#lib-sort').value;
 
       const params = new URLSearchParams({
@@ -645,6 +646,7 @@
       if (folder) params.set('folder', folder);
       if (codec) params.set('codec', codec);
       if (skip) params.set('skip', skip);
+      if (fail) params.set('fail', fail);
 
       const data = await api(`/videos?${params}`);
       libTotal = data.total || 0;
@@ -674,6 +676,7 @@
           </div>
           <span class="mb-card-size">${fmtSize(v.size)}</span>
           ${v.encode_skip ? '<span class="mb-card-skip" title="Encodage ignoré (résultat plus gros)">⚠ skip</span>' : ''}
+          ${v.encode_failed ? `<span class="mb-card-fail" title="${escHtml(t('lib.fail_tag'))}">❌ fail</span>` : ''}
           <div class="mb-card-info">
             <div class="mb-card-name" title="${escHtml(v.filename)}">${escHtml(v.filename)}</div>
             <div class="mb-card-meta">${v.codec || '?'} · ${v.width ? v.width + '×' + v.height : '?'} · ${fmtDur(v.duration)}</div>
@@ -802,7 +805,7 @@
     clearTimeout(libSearchTimer);
     libSearchTimer = setTimeout(() => { libPage = 1; loadLibrary(); }, 350);
   });
-  ['lib-folder', 'lib-codec', 'lib-skip', 'lib-sort'].forEach(id => {
+  ['lib-folder', 'lib-codec', 'lib-skip', 'lib-fail', 'lib-sort'].forEach(id => {
     $(`#${id}`).addEventListener('change', () => { libPage = 1; loadLibrary(); });
   });
   $('#lib-order-btn').addEventListener('click', () => {
@@ -827,10 +830,12 @@
       const folder = $('#lib-folder').value;
       const codec = $('#lib-codec').value;
       const skip = $('#lib-skip').value;
+      const fail = $('#lib-fail').value;
       if (q) params.set('q', q);
       if (folder) params.set('folder', folder);
       if (codec) params.set('codec', codec);
       if (skip) params.set('skip', skip);
+      if (fail) params.set('fail', fail);
       const data = await api(`/videos/ids?${params}`);
       if (!data.ids || !data.ids.length) { toast(t('toast.no_matching'), 'info'); return; }
       data.ids.forEach(id => libSelected.add(id));

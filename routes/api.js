@@ -142,11 +142,13 @@ router.get('/thumbs/progress', requireAuth, (req, res) => {
 router.get('/videos', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
+    const FAIL_EXISTS_SQL = "EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status IN ('error','failed'))";
     const {
       q = '',              // search query (filename / folder)
       folder = '',         // exact folder filter
       codec = '',          // video_codec filter
       skip = '',           // encode_skip filter: 'hide' | 'only' | '' (all)
+      fail = '',           // encode error filter: 'hide' | 'only' | '' (all)
       sort = 'filename',   // sort column
       order = 'asc',       // asc | desc
       page = 1,
@@ -178,6 +180,11 @@ router.get('/videos', requireAuth, async (req, res) => {
     } else if (skip === 'only') {
       where.push('v.encode_skip = 1');
     }
+    if (fail === 'hide') {
+      where.push(`NOT ${FAIL_EXISTS_SQL}`);
+    } else if (fail === 'only') {
+      where.push(FAIL_EXISTS_SQL);
+    }
 
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -192,7 +199,7 @@ router.get('/videos', requireAuth, async (req, res) => {
     const off = Math.max(0, (parseInt(page, 10) - 1)) * lim;
 
     const [rows] = await pool.query(
-      `SELECT v.* FROM videos v ${whereSQL} ORDER BY ${sortExpr} ${sortDir} LIMIT ? OFFSET ?`,
+      `SELECT v.*, ${FAIL_EXISTS_SQL} AS encode_failed FROM videos v ${whereSQL} ORDER BY ${sortExpr} ${sortDir} LIMIT ? OFFSET ?`,
       [...params, lim, off]
     );
     const [[{ total }]] = await pool.query(
@@ -208,7 +215,8 @@ router.get('/videos', requireAuth, async (req, res) => {
 router.get('/videos/ids', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
-    const { q = '', folder = '', codec = '', skip = '' } = req.query;
+    const FAIL_EXISTS_SQL = "EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status IN ('error','failed'))";
+    const { q = '', folder = '', codec = '', skip = '', fail = '' } = req.query;
     const where = [];
     const params = [];
     if (q) { where.push('(v.filename LIKE ? OR v.folder LIKE ?)'); const like = `%${q}%`; params.push(like, like); }
@@ -221,6 +229,11 @@ router.get('/videos/ids', requireAuth, async (req, res) => {
       where.push('(v.encode_skip IS NULL OR v.encode_skip = 0)');
     } else if (skip === 'only') {
       where.push('v.encode_skip = 1');
+    }
+    if (fail === 'hide') {
+      where.push(`NOT ${FAIL_EXISTS_SQL}`);
+    } else if (fail === 'only') {
+      where.push(FAIL_EXISTS_SQL);
     }
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(`SELECT v.id FROM videos v ${whereSQL}`, params);

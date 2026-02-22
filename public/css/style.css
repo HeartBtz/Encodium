@@ -383,6 +383,12 @@ body {
   font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; pointer-events: none;
   z-index: 1;
 }
+.mb-card-fail {
+  position: absolute; top: 4px; left: 80px;
+  background: rgba(239,68,68,.9); color: #fff;
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; pointer-events: none;
+  z-index: 1;
+}
 .mb-card-cb {
   position: absolute; top: 4px; left: 4px;
   width: 15px; height: 15px; accent-color: var(--a-accent); cursor: pointer;
