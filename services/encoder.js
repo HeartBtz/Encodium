@@ -238,8 +238,12 @@ function buildArgsV2(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
     vfFilters.push(`scale=-2:${downscale}`);
   }
 
-  // Map all streams, drop bad subtitle streams
-  tail.push('-map', '0');
+  // Map streams — MKV only supports video/audio/subtitles, so skip data & attachments
+  if (isMkv) {
+    tail.push('-map', '0:v', '-map', '0:a?', '-map', '0:s?');
+  } else {
+    tail.push('-map', '0');
+  }
   for (const idx of badSubIndices) {
     tail.push('-map', `-0:${idx}`);
   }
@@ -316,8 +320,9 @@ function buildArgsV2(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   // Timestamp preservation
   tail.push('-fps_mode', 'passthrough');
 
-  // Audio/Subs/Data/Attachments: copy
-  tail.push('-c:a', 'copy', '-c:s', 'copy', '-c:d', 'copy', '-c:t', 'copy');
+  // Audio/Subs: copy — Data/Attachments only for MP4 (MKV doesn't support them)
+  tail.push('-c:a', 'copy', '-c:s', 'copy');
+  if (!isMkv) tail.push('-c:d', 'copy', '-c:t', 'copy');
 
   // Container-specific
   if (!isMkv) tail.push('-movflags', '+faststart');
