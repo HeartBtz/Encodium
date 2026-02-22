@@ -8,6 +8,7 @@
  *   - settings          : key‑value app settings
  *   - encoding_savings  : persistent encode savings ledger
  *   - custom_presets    : user-defined encoding presets
+ *   - media_sources     : configured media source directories
  */
 'use strict';
 

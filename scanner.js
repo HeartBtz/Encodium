@@ -1,11 +1,17 @@
 /**
  * scanner.js — Encodium video scanner & thumbnail generator
  *
- * Scans MEDIA_DIR for video files, indexes them in the database,
- * extracts metadata via ffprobe, and generates thumbnails.
+ * Scans all configured media source directories for video files, indexes
+ * them in the database, and extracts metadata via ffprobe.
+ * Thumbnails are generated on-demand when browsing the library (not during
+ * the scan pipeline).
  *
- * Directory layout:
- *   MEDIA_DIR/
+ * Media sources are stored in the `media_sources` DB table and managed via
+ * Settings → Sources in the UI or via the CLI.
+ *
+ * The folder category shown in the library is the first subdirectory
+ * beneath each source root:
+ *   /your/source/
  *   ├── FolderName/        ← folder category
  *   │   ├── video.mp4
  *   │   └── sub/dir/video.mkv

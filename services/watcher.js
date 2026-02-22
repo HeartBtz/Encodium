@@ -5,7 +5,9 @@
  *   1. File system watchers on all source directories (debounced sync)
  *   2. Configurable periodic sync interval (fallback for NFS/CIFS/etc.)
  *
- * Also exposes `runFullPipeline()` to trigger scan → enrich → thumbs.
+ * Also exposes `runFullPipeline()` to trigger scan → enrich.
+ * Thumbnails are generated on-demand when browsing the library, not during
+ * the auto-scan pipeline.
  */
 'use strict';
 
