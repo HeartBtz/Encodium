@@ -25,7 +25,7 @@
 - **Batch Encoding** — Select multiple videos, encode with H.265/HEVC or AV1 using detected presets
 - **Multi-GPU Support** — Automatic load-balanced distribution across multiple GPUs
 - **Metadata Enrichment** — Automatic ffprobe extraction of codec, resolution, duration, HDR, audio info
-- **Thumbnail Generation** — Automatic thumbnail creation when videos are scanned
+- **Thumbnail Generation** — On-demand thumbnail generation when browsing the library (non-blocking, generated in background with shimmer skeleton placeholder)
 
 ### Encoding Engine
 - **Size Guard** — Rejects encodes that are larger than the original, keeping the source intact
@@ -171,7 +171,7 @@ node server.js
 Encodium includes several security measures:
 
 - **Helmet** — HTTP security headers (HSTS, X-Frame-Options, etc.)
-- **Rate limiting** — 600 requests/min per IP on API routes + **10 requests/15 min** on login
+- **Rate limiting** — 1200 requests/min per IP on API routes (thumbnails & SSE stream excluded from count) + **10 requests/15 min** on login
 - **JWT authentication** — All API routes require a valid Bearer token (ephemeral secret generated if `JWT_SECRET` not set)
 - **Admin-only destructive operations** — Bulk file deletion, source management, worker count, webhook/autoscan settings, and filesystem browsing require admin role
 - **Bcrypt passwords** — User passwords hashed with bcryptjs (cost 10–12)
@@ -332,6 +332,15 @@ Migrations run automatically on startup via `db.initSchema()`.
 5. **Diagnostics on signal kill** — Memory RSS/heap logged on SIGTERM, ffmpeg PID tracking
 
 ## Changelog
+
+### v1.4.1
+- **Non-blocking thumbnail endpoint** — `/api/thumb/:id` now returns HTTP 202 immediately when a thumbnail doesn't exist yet, generates it in the background (fire-and-forget), and lets the browser retry; eliminates head-of-line blocking in the browser's HTTP/1.1 connection pool
+- **Skeleton shimmer loader** — Library cards show an animated shimmer + spinner while thumbnails are generating, with a smooth fade-in on load and graceful 2-retry backoff before falling back to the placeholder SVG
+- **Proxy CORS auto-reload** — When the Coder reverse-proxy session expires, the frontend detects the cross-origin CORS redirect (instead of spamming "Connexion au serveur impossible") and automatically reloads the page after 3 seconds with a toast notification
+- **Rate limit raised** — API rate limit increased 600 → 1200 req/min; thumbnail and SSE endpoints excluded from the limit entirely
+- **Reduced API flooding** — Queue poll interval doubled (15s → 30s); SSE reconnect and `showApp()` startup sequences deduplicated to avoid redundant parallel API calls; `switchTab()` now loads dashboard on tab activation
+- **Frontend network diagnostics** — All API calls logged in browser console with method, path, status, duration, and retry info; press `Ctrl+Shift+D` for a live debug overlay; call `_encodiumDebug()` in DevTools for a full request history table
+- **SSE reconnect scoped refresh** — After SSE reconnects, only the currently active tab reloads (instead of dashboard + library + queue simultaneously)
 
 ### v1.4.0
 - **Multi-source media directories** — Replace single `MEDIA_DIR` with a file-browser UI + DB-backed source management
