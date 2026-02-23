@@ -84,6 +84,13 @@ i18n.registerLang('ja', {
   'queue.title': 'エンコードキュー',
   'queue.workers': 'ワーカー:',
   'queue.cancel_all': '⏹ すべてキャンセル',
+  'queue.pause': '⏸ 一時停止',
+  'queue.resume': '▶ 再開',
+  'queue.paused': '一時停止中',
+  'queue.cancel_job': 'このエンコードをキャンセル',
+  'queue.force_kill': '強制終了 (SIGKILL)',
+  'queue.force_kill_confirm': 'このジョブを強制終了しますか？ffmpegプロセスが即座に終了されます。',
+  'queue.cancel_all_confirm': 'すべてのジョブをキャンセルしますか（エンコード中 + 待機中）？',
   'queue.clear': '🧹 キューを空にする',
   'queue.encoding': '処理中',
   'queue.pending': '待機中',
@@ -103,6 +110,8 @@ i18n.registerLang('ja', {
   'toast.workers_set': 'ワーカーを {count} に設定しました',
   'toast.jobs_cancelled': '{n} 件のジョブをキャンセルしました',
   'toast.jobs_cleared': '{n} 件のジョブをキューから削除しました',
+  'toast.queue_paused': 'エンコードキューを一時停止しました',
+  'toast.queue_resumed': 'エンコードキューを再開しました',
 
   'player.title': '動画プレーヤー',
 

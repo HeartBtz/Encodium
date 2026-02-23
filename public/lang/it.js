@@ -84,6 +84,13 @@ i18n.registerLang('it', {
   'queue.title': 'Coda di codifica',
   'queue.workers': 'Worker:',
   'queue.cancel_all': '⏹ Annulla tutti',
+  'queue.pause': '⏸ Pausa',
+  'queue.resume': '▶ Riprendi',
+  'queue.paused': 'IN PAUSA',
+  'queue.cancel_job': 'Annulla questa codifica',
+  'queue.force_kill': 'Arresto forzato (SIGKILL)',
+  'queue.force_kill_confirm': 'Sei sicuro di voler arrestare forzatamente questo job? Il processo ffmpeg verrà terminato immediatamente.',
+  'queue.cancel_all_confirm': 'Annullare TUTTI i job (codifica + in attesa)?',
   'queue.clear': '🧹 Svuota coda',
   'queue.encoding': 'In corso',
   'queue.pending': 'In attesa',
@@ -103,6 +110,8 @@ i18n.registerLang('it', {
   'toast.workers_set': 'Worker impostati a {count}',
   'toast.jobs_cancelled': '{n} job annullati',
   'toast.jobs_cleared': '{n} job rimossi dalla coda',
+  'toast.queue_paused': 'Coda di codifica in pausa',
+  'toast.queue_resumed': 'Coda di codifica ripresa',
 
   'player.title': 'Lettore video',
 

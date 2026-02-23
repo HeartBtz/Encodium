@@ -84,6 +84,13 @@ i18n.registerLang('ru', {
   'queue.title': 'Очередь кодирования',
   'queue.workers': 'Воркеры:',
   'queue.cancel_all': '⏹ Отменить все',
+  'queue.pause': '⏸ Пауза',
+  'queue.resume': '▶ Возобновить',
+  'queue.paused': 'ПАУЗА',
+  'queue.cancel_job': 'Отменить это кодирование',
+  'queue.force_kill': 'Принудительное завершение (SIGKILL)',
+  'queue.force_kill_confirm': 'Вы уверены, что хотите принудительно завершить это задание? Процесс ffmpeg будет мгновенно уничтожен.',
+  'queue.cancel_all_confirm': 'Отменить ВСЕ задания (кодирование + ожидающие)?',
   'queue.clear': '🧹 Очистить очередь',
   'queue.encoding': 'Выполняется',
   'queue.pending': 'Ожидание',
@@ -103,6 +110,8 @@ i18n.registerLang('ru', {
   'toast.workers_set': 'Воркеры установлены: {count}',
   'toast.jobs_cancelled': '{n} заданий отменено',
   'toast.jobs_cleared': '{n} заданий удалено из очереди',
+  'toast.queue_paused': 'Очередь кодирования приостановлена',
+  'toast.queue_resumed': 'Очередь кодирования возобновлена',
 
   'player.title': 'Видеоплеер',
 

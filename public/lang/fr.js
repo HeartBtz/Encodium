@@ -107,6 +107,13 @@ i18n.registerLang('fr', {
   'queue.workers': 'Workers :',
   'queue.cancel_all': '⏹ Tout annuler',
   'queue.clear': '🧹 Vider la file',
+  'queue.pause': '⏸ Pause',
+  'queue.resume': '▶ Reprendre',
+  'queue.paused': 'EN PAUSE',
+  'queue.cancel_job': 'Annuler cet encodage',
+  'queue.force_kill': 'Forcer l\'arrêt (SIGKILL)',
+  'queue.force_kill_confirm': 'Êtes-vous sûr de vouloir forcer l\'arrêt de ce job ? Le process ffmpeg sera tué immédiatement.',
+  'queue.cancel_all_confirm': 'Annuler TOUS les jobs (en cours + en attente) ?',
   'queue.encoding': 'En cours',
   'queue.pending': 'En attente',
   'queue.done': 'Terminés',
@@ -128,6 +135,8 @@ i18n.registerLang('fr', {
   'toast.workers_set': 'Workers réglés à {count}',
   'toast.jobs_cancelled': '{n} jobs annulés',
   'toast.jobs_cleared': '{n} job(s) supprimé(s) de la file',
+  'toast.queue_paused': 'File d\'encodage en pause',
+  'toast.queue_resumed': 'File d\'encodage reprise',
 
   // ── Player ──
   'player.title': 'Lecture vidéo',

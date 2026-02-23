@@ -84,6 +84,13 @@ i18n.registerLang('zh', {
   'queue.title': '编码队列',
   'queue.workers': '工作线程：',
   'queue.cancel_all': '⏹ 全部取消',
+  'queue.pause': '⏸ 暂停',
+  'queue.resume': '▶ 继续',
+  'queue.paused': '已暂停',
+  'queue.cancel_job': '取消此编码',
+  'queue.force_kill': '强制终止 (SIGKILL)',
+  'queue.force_kill_confirm': '确定要强制终止此任务吗？ffmpeg 进程将被立即终止。',
+  'queue.cancel_all_confirm': '取消所有任务（编码中 + 等待中）？',
   'queue.clear': '🧹 清空队列',
   'queue.encoding': '进行中',
   'queue.pending': '等待中',
@@ -103,6 +110,8 @@ i18n.registerLang('zh', {
   'toast.workers_set': '工作线程设为 {count}',
   'toast.jobs_cancelled': '{n} 个任务已取消',
   'toast.jobs_cleared': '{n} 个任务已从队列移除',
+  'toast.queue_paused': '编码队列已暂停',
+  'toast.queue_resumed': '编码队列已恢复',
 
   'player.title': '视频播放器',
 

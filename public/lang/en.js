@@ -107,6 +107,13 @@ i18n.registerLang('en', {
   'queue.workers': 'Workers:',
   'queue.cancel_all': '⏹ Cancel all',
   'queue.clear': '🧹 Clear queue',
+  'queue.pause': '⏸ Pause',
+  'queue.resume': '▶ Resume',
+  'queue.paused': 'PAUSED',
+  'queue.cancel_job': 'Cancel this encoding',
+  'queue.force_kill': 'Force kill (SIGKILL)',
+  'queue.force_kill_confirm': 'Are you sure you want to force-kill this job? The ffmpeg process will be killed immediately.',
+  'queue.cancel_all_confirm': 'Cancel ALL jobs (encoding + pending)?',
   'queue.encoding': 'In progress',
   'queue.pending': 'Pending',
   'queue.done': 'Completed',
@@ -128,6 +135,8 @@ i18n.registerLang('en', {
   'toast.workers_set': 'Workers set to {count}',
   'toast.jobs_cancelled': '{n} jobs cancelled',
   'toast.jobs_cleared': '{n} job(s) removed from queue',
+  'toast.queue_paused': 'Encoding queue paused',
+  'toast.queue_resumed': 'Encoding queue resumed',
 
   // ── Player ──
   'player.title': 'Video player',

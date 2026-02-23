@@ -78,6 +78,7 @@ function deviceLoad(devKey) { return deviceLocks.get(devKey) || 0; }
 /* ─── Queue state ────────────────────────────────────────────── */
 const active = new Map();     // jobId -> { proc, video_id, cancel }
 let running = true;
+let paused = false;            // pause queue processing (no new jobs start)
 let workerCount = MAX_WORKERS;
 let _processing = false;
 let _processingTs = 0;          // timestamp when _processing was set
@@ -1055,6 +1056,7 @@ async function checkAndFireWebhook() {
 
 async function processQueue() {
   if (!running) return;
+  if (paused) return; // Queue is paused — don't start new jobs
   // Safety valve: if _processing stuck for >30s, force-reset it
   if (_processing && (Date.now() - _processingTs > PROCESSING_TIMEOUT)) {
     logger.warn('encoder', `processQueue lock stuck for ${Math.round((Date.now() - _processingTs)/1000)}s — force-releasing`);
@@ -1139,13 +1141,15 @@ async function recoverStalledJobs() {
 
   try {
     const pool = db.getPool();
+    // Mark stalled encoding jobs as cancelled (NOT pending) to avoid auto-restart loops after crash
     const [stalled] = await pool.query("SELECT id FROM encode_jobs WHERE status='encoding'");
     if (stalled.length > 0) {
       const ids = stalled.map(j => j.id);
       await pool.query(
-        "UPDATE encode_jobs SET status='pending', error='Recovered after server restart', started_at=NULL WHERE status='encoding'"
+        "UPDATE encode_jobs SET status='cancelled', error='Interrompu par redémarrage serveur — relancez manuellement si nécessaire', ended_at=NOW() WHERE status='encoding'"
       );
-      logger.info('encoder', `Recovered ${stalled.length} stalled job(s): [${ids.join(', ')}]`);
+      logger.warn('encoder', `Marked ${stalled.length} stalled job(s) as cancelled after restart: [${ids.join(', ')}]`);
+      broadcast('job_update', { recovered: true, count: stalled.length, ids });
     }
   } catch (e) {
     logger.error('encoder', `Failed to recover stalled jobs: ${e.message}`);
@@ -1222,8 +1226,19 @@ async function enqueueBatch(videoIds, presetId, replaceOriginal = false, opts = 
 
 function cancelJob(jobId) {
   const entry = active.get(jobId);
-  if (entry) { entry.cancel(); logger.info('encoder', `Job #${jobId} cancel requested`); return true; }
-  return false;
+  if (entry) {
+    entry.cancel();
+    logger.info('encoder', `Job #${jobId} cancel requested`);
+    return true;
+  }
+  // If not in active map, it might be a pending job — cancel it in DB directly
+  db.getPool().query(
+    "UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=? AND status IN ('pending','encoding')",
+    [jobId]
+  ).then(([r]) => {
+    if (r.affectedRows > 0) broadcast('job_update', { id: jobId, status: 'cancelled' });
+  }).catch(() => {});
+  return true;
 }
 
 async function cancelPending() {
@@ -1231,6 +1246,60 @@ async function cancelPending() {
   const [result] = await pool.query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE status='pending'");
   if (result.affectedRows > 0) logger.info('encoder', `Cancelled ${result.affectedRows} pending job(s)`);
   return result.affectedRows;
+}
+
+async function cancelAll() {
+  const pool = db.getPool();
+  // 1. Cancel all pending jobs in DB
+  const [pendingResult] = await pool.query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE status='pending'");
+  let total = pendingResult.affectedRows;
+
+  // 2. Kill all actively encoding ffmpeg processes
+  const activeIds = [...active.keys()];
+  for (const [jobId, entry] of active.entries()) {
+    try { entry.cancel(); } catch {}
+    // Immediately mark in DB as cancelled (don't wait for processJob to handle it)
+    await pool.query(
+      "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error='Annulé par l\'utilisateur' WHERE id=? AND status='encoding'",
+      [jobId]
+    ).catch(() => {});
+    total++;
+  }
+
+  if (total > 0) {
+    logger.info('encoder', `Cancelled ALL: ${pendingResult.affectedRows} pending + ${activeIds.length} encoding job(s)`);
+    broadcast('job_update', { cancelledAll: true });
+  }
+  return total;
+}
+
+async function forceKillJob(jobId) {
+  const entry = active.get(jobId);
+  if (entry && entry.proc) {
+    try { entry.proc.kill('SIGKILL'); } catch {}
+    logger.warn('encoder', `Job #${jobId} force-killed (SIGKILL)`);
+  }
+  // Also try to kill by PID pattern (orphan ffmpeg for this job)
+  try {
+    const { execSync } = require('child_process');
+    const pids = execSync(`pgrep -f 'ffmpeg.*\\.tmp\\.${jobId}\\.' 2>/dev/null || true`).toString().trim();
+    if (pids) {
+      for (const pid of pids.split('\n').filter(Boolean)) {
+        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch {}
+      }
+      logger.warn('encoder', `Force-killed ${pids.split('\n').filter(Boolean).length} orphan ffmpeg process(es) for job #${jobId}`);
+    }
+  } catch {}
+  // Mark as cancelled in DB
+  const pool = db.getPool();
+  await pool.query(
+    "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error='Force-kill par l\'utilisateur' WHERE id=? AND status IN ('pending','encoding')",
+    [jobId]
+  );
+  active.delete(jobId);
+  clearProgressThrottle(jobId);
+  broadcast('job_update', { id: jobId, status: 'cancelled' });
+  return true;
 }
 
 async function retryJob(jobId) {
@@ -1278,7 +1347,7 @@ function setWorkerCount(n) {
 
 function getStatus() {
   return {
-    running, workerCount, activeJobs: active.size,
+    running, paused, workerCount, activeJobs: active.size,
     active: [...active.entries()].map(([id, e]) => ({ id, video_id: e.video_id })),
   };
 }
@@ -1354,17 +1423,41 @@ async function start() {
   logger.info('encoder', `Encoder started with ${workerCount} worker(s)`);
 }
 
-function stop() {
+async function stop() {
   running = false;
   if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
   const jobIds = [...active.keys()];
-  for (const e of active.values()) e.cancel();
+  // Mark all active jobs as cancelled in DB BEFORE killing ffmpeg
+  // This ensures DB state is correct even if the process dies immediately after
+  const pool = db.getPool();
+  for (const jobId of jobIds) {
+    try {
+      await pool.query(
+        "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error='Arrêt du serveur' WHERE id=? AND status='encoding'",
+        [jobId]
+      );
+    } catch {}
+  }
+  // Now kill ffmpeg processes
+  for (const e of active.values()) {
+    try { e.cancel(); } catch {}
+  }
   logger.info('encoder', `Encoder stopped — cancelled ${active.size} active job(s): [${jobIds.join(', ')}]`);
 }
 
+function setPaused(value) {
+  paused = !!value;
+  logger.info('encoder', paused ? 'Queue PAUSED by user' : 'Queue RESUMED by user');
+  broadcast('encoder_state', { paused });
+  if (!paused) setImmediate(processQueue); // resume processing
+  return paused;
+}
+
+function isPaused() { return paused; }
+
 module.exports = {
-  enqueue, enqueueBatch, cancelJob, cancelPending, retryJob, deleteJob, clearFinished,
+  enqueue, enqueueBatch, cancelJob, cancelPending, cancelAll, forceKillJob, retryJob, deleteJob, clearFinished,
   setWorkerCount, getStatus, getHistory, getJobLog,
   addSSEClient, removeSSEClient, broadcast,
-  start, stop, processQueue,
+  start, stop, processQueue, setPaused, isPaused,
 };

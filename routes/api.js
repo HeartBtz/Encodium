@@ -491,8 +491,25 @@ router.post('/encode/cancel/:id', requireAuth, (req, res) => {
 });
 
 router.post('/encode/cancel-all', requireAuth, async (req, res) => {
-  const n = await encoder.cancelPending();
+  const n = await encoder.cancelAll();
   res.json({ cancelled: n });
+});
+
+router.post('/encode/force-kill/:id', requireAuth, async (req, res) => {
+  try {
+    await encoder.forceKillJob(parseInt(req.params.id, 10));
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
+});
+
+router.post('/encode/pause', requireAuth, (req, res) => {
+  const p = encoder.setPaused(true);
+  res.json({ paused: p });
+});
+
+router.post('/encode/resume', requireAuth, (req, res) => {
+  const p = encoder.setPaused(false);
+  res.json({ paused: p });
 });
 
 router.post('/encode/clear-finished', requireAuth, async (req, res) => {

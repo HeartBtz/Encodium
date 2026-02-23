@@ -84,6 +84,13 @@ i18n.registerLang('ko', {
   'queue.title': '인코딩 큐',
   'queue.workers': '워커:',
   'queue.cancel_all': '⏹ 모두 취소',
+  'queue.pause': '⏸ 일시정지',
+  'queue.resume': '▶ 재개',
+  'queue.paused': '일시정지됨',
+  'queue.cancel_job': '이 인코딩 취소',
+  'queue.force_kill': '강제 종료 (SIGKILL)',
+  'queue.force_kill_confirm': '이 작업을 강제 종료하시겠습니까? ffmpeg 프로세스가 즉시 종료됩니다.',
+  'queue.cancel_all_confirm': '모든 작업을 취소하시겠습니까 (인코딩 + 대기 중)?',
   'queue.clear': '🧹 큐 비우기',
   'queue.encoding': '진행 중',
   'queue.pending': '대기 중',
@@ -103,6 +110,8 @@ i18n.registerLang('ko', {
   'toast.workers_set': '워커를 {count}(으)로 설정',
   'toast.jobs_cancelled': '{n}개 작업 취소됨',
   'toast.jobs_cleared': '{n}개 작업이 큐에서 제거됨',
+  'toast.queue_paused': '인코딩 큐가 일시정지되었습니다',
+  'toast.queue_resumed': '인코딩 큐가 재개되었습니다',
 
   'player.title': '동영상 플레이어',
 

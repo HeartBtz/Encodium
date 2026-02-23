@@ -84,6 +84,13 @@ i18n.registerLang('ar', {
   'queue.title': 'قائمة انتظار الترميز',
   'queue.workers': 'العمال:',
   'queue.cancel_all': '⏹ إلغاء الكل',
+  'queue.pause': '⏸ إيقاف مؤقت',
+  'queue.resume': '▶ استئناف',
+  'queue.paused': 'متوقف مؤقتاً',
+  'queue.cancel_job': 'إلغاء هذا الترميز',
+  'queue.force_kill': 'إنهاء قسري (SIGKILL)',
+  'queue.force_kill_confirm': 'هل أنت متأكد من إنهاء هذه المهمة قسرياً؟ سيتم إنهاء عملية ffmpeg فوراً.',
+  'queue.cancel_all_confirm': 'إلغاء جميع المهام (الترميز + المعلقة)؟',
   'queue.clear': '🧹 تفريغ القائمة',
   'queue.encoding': 'قيد التنفيذ',
   'queue.pending': 'بانتظار',
@@ -103,6 +110,8 @@ i18n.registerLang('ar', {
   'toast.workers_set': 'تم ضبط العمال على {count}',
   'toast.jobs_cancelled': 'تم إلغاء {n} مهام',
   'toast.jobs_cleared': 'تم إزالة {n} مهام من القائمة',
+  'toast.queue_paused': 'تم إيقاف قائمة انتظار الترميز مؤقتاً',
+  'toast.queue_resumed': 'تم استئناف قائمة انتظار الترميز',
 
   'player.title': 'مشغل الفيديو',
 

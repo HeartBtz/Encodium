@@ -84,6 +84,13 @@ i18n.registerLang('es', {
   'queue.title': 'Cola de codificación',
   'queue.workers': 'Workers:',
   'queue.cancel_all': '⏹ Cancelar todo',
+  'queue.pause': '⏸ Pausar',
+  'queue.resume': '▶ Reanudar',
+  'queue.paused': 'EN PAUSA',
+  'queue.cancel_job': 'Cancelar esta codificación',
+  'queue.force_kill': 'Forzar cierre (SIGKILL)',
+  'queue.force_kill_confirm': '¿Está seguro de que desea forzar el cierre de este trabajo? El proceso ffmpeg se detendrá inmediatamente.',
+  'queue.cancel_all_confirm': '¿Cancelar TODOS los trabajos (codificación + pendientes)?',
   'queue.clear': '🧹 Vaciar cola',
   'queue.encoding': 'En curso',
   'queue.pending': 'Pendiente',
@@ -103,6 +110,8 @@ i18n.registerLang('es', {
   'toast.workers_set': 'Workers establecidos en {count}',
   'toast.jobs_cancelled': '{n} trabajos cancelados',
   'toast.jobs_cleared': '{n} trabajo(s) eliminado(s) de la cola',
+  'toast.queue_paused': 'Cola de codificación en pausa',
+  'toast.queue_resumed': 'Cola de codificación reanudada',
 
   'player.title': 'Reproductor de vídeo',
 

@@ -393,6 +393,13 @@
     sse.addEventListener('job_progress', e => {
       try { handleJobProgress(JSON.parse(e.data)); } catch {}
     });
+    sse.addEventListener('encoder_state', e => {
+      try {
+        const d = JSON.parse(e.data);
+        if (typeof d.paused === 'boolean') { _queuePaused = d.paused; updatePauseButton(); }
+        scheduleLoadEncodeQueue(300);
+      } catch {}
+    });
     sse.addEventListener('log', e => {
       try { addLogEntry(JSON.parse(e.data)); } catch {}
     });
@@ -898,6 +905,8 @@
     try {
       const [status, history] = await Promise.all([api('/encode/status'), api('/encode/history?limit=200')]);
       if (gen !== _eqGen) return; // a newer request was made — discard stale result
+      // Sync pause state from server
+      if (typeof status.paused === 'boolean') { _queuePaused = status.paused; updatePauseButton(); }
       renderEncodeStatus(status, history.rows, history.counts);
     } catch (e) {
       if (gen === _eqGen) toast(t('error.encoding', {msg: e.message}), 'error');
@@ -937,6 +946,7 @@
         <span class="enc-qs"><span class="dot dot-pending"></span> ${t('queue.pending')} : <b>${counts.pending}</b></span>
         <span class="enc-qs"><span class="dot dot-done"></span> ${t('queue.done')} : <b>${counts.done}</b></span>
         <span class="enc-qs"><span class="dot dot-error"></span> ${t('queue.errors')} : <b>${counts.error}</b></span>
+        ${status.paused ? `<span class="enc-qs" style="color:var(--a-warn);font-weight:bold">⏸ ${t('queue.paused')}</span>` : ''}
       </div>
       <div style="font-size:12px;color:var(--a-text-muted)">${t('queue.active_workers', {active: status.activeJobs, total: status.workerCount})}</div>
     `;
@@ -986,7 +996,8 @@
           })() : ''}
           <div class="enc-job-actions">
             ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="Priorité +">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="Priorité −">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
-            ${j.status === 'error' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
+            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})" title="${t('queue.cancel_job')}">✕</button><button class="btn btn-xs btn-ghost" onclick="encAction('force-kill',${j.id})" title="${t('queue.force_kill')}">💀</button>` : ''}
+            ${j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
             ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
             ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
             ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('delete',${j.id})">🗑</button>` : ''}
@@ -999,6 +1010,10 @@
   window.encAction = async function (act, id) {
     try {
       if (act === 'cancel') await api(`/encode/cancel/${id}`, { method: 'POST' });
+      else if (act === 'force-kill') {
+        if (!confirm(t('queue.force_kill_confirm'))) return;
+        await api(`/encode/force-kill/${id}`, { method: 'POST' });
+      }
       else if (act === 'retry') await api(`/encode/retry/${id}`, { method: 'POST' });
       else if (act === 'delete') await api(`/encode/job/${id}`, { method: 'DELETE' });
       else if (act === 'up') await api(`/encode/job/${id}/move`, { method: 'POST', body: JSON.stringify({ direction: 'up' }) });
@@ -1091,8 +1106,35 @@
       toast(t('toast.workers_set', {count}), 'success');
     } catch (e) { toast(e.message, 'error'); }
   });
+
+  // Pause / Resume queue
+  let _queuePaused = false;
+  function updatePauseButton() {
+    const btn = $('#btn-pause-queue');
+    if (_queuePaused) {
+      btn.textContent = t('queue.resume');
+      btn.classList.remove('btn-ghost');
+      btn.classList.add('btn-primary');
+    } else {
+      btn.textContent = t('queue.pause');
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-ghost');
+    }
+  }
+  $('#btn-pause-queue').addEventListener('click', async () => {
+    try {
+      const endpoint = _queuePaused ? '/encode/resume' : '/encode/pause';
+      const r = await api(endpoint, { method: 'POST' });
+      _queuePaused = r.paused;
+      updatePauseButton();
+      toast(_queuePaused ? t('toast.queue_paused') : t('toast.queue_resumed'), 'info');
+      loadEncodeQueue();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
   $('#btn-cancel-all').addEventListener('click', async () => {
     try {
+      if (!confirm(t('queue.cancel_all_confirm'))) return;
       const r = await api('/encode/cancel-all', { method: 'POST' });
       toast(t('toast.jobs_cancelled', {n: r.cancelled}), 'info');
       loadEncodeQueue();

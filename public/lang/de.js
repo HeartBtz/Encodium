@@ -84,6 +84,13 @@ i18n.registerLang('de', {
   'queue.title': 'Encoding-Warteschlange',
   'queue.workers': 'Workers:',
   'queue.cancel_all': '⏹ Alle abbrechen',
+  'queue.pause': '⏸ Pause',
+  'queue.resume': '▶ Fortsetzen',
+  'queue.paused': 'PAUSIERT',
+  'queue.cancel_job': 'Dieses Encoding abbrechen',
+  'queue.force_kill': 'Erzwungenes Beenden (SIGKILL)',
+  'queue.force_kill_confirm': 'Sind Sie sicher, dass Sie diesen Job erzwungen beenden möchten? Der ffmpeg-Prozess wird sofort beendet.',
+  'queue.cancel_all_confirm': 'ALLE Jobs abbrechen (Encoding + wartend)?',
   'queue.clear': '🧹 Warteschlange leeren',
   'queue.encoding': 'Laufend',
   'queue.pending': 'Wartend',
@@ -103,6 +110,8 @@ i18n.registerLang('de', {
   'toast.workers_set': 'Workers auf {count} gesetzt',
   'toast.jobs_cancelled': '{n} Jobs abgebrochen',
   'toast.jobs_cleared': '{n} Job(s) aus Warteschlange entfernt',
+  'toast.queue_paused': 'Encoding-Warteschlange pausiert',
+  'toast.queue_resumed': 'Encoding-Warteschlange fortgesetzt',
 
   'player.title': 'Videoplayer',
 
