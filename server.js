@@ -69,19 +69,13 @@ async function boot() {
     }
   }
 
-  // Start encode queue processor (recovers stalled jobs from DB)
-  await encoder.start();
-
-  // Start file watcher & auto-sync service
-  await watcher.start();
-
-  const server = app.listen(PORT, () => {
-    console.log(`\n  ╔══════════════════════════════════════╗`);
-    console.log(`  ║   Encodium v${version.padEnd(24)}║`);
-    console.log(`  ║   http://localhost:${PORT}              ║`);
-    console.log(`  ╚══════════════════════════════════════╝\n`);
-  });
-  server.on('error', (err) => {
+  // ── Bind port FIRST — fail fast before touching jobs/ffmpeg ──
+  // If another instance holds the port, we exit immediately without
+  // killing orphan ffmpegs or cancelling stalled jobs.
+  const server = await new Promise((resolve, reject) => {
+    const srv = app.listen(PORT, () => resolve(srv));
+    srv.on('error', reject);
+  }).catch((err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[server] Port ${PORT} already in use — is another Encodium instance running (PM2 / systemd)?`);
       console.error('[server] Fix: stop the other instance first, e.g.  pm2 delete encodium  or  systemctl stop encodium');
@@ -90,6 +84,17 @@ async function boot() {
     }
     process.exit(1);
   });
+
+  // Start encode queue processor (recovers stalled jobs from DB)
+  await encoder.start();
+
+  // Start file watcher & auto-sync service
+  await watcher.start();
+
+  console.log(`\n  ╔══════════════════════════════════════╗`);
+  console.log(`  ║   Encodium v${version.padEnd(24)}║`);
+  console.log(`  ║   http://localhost:${PORT}              ║`);
+  console.log(`  ╚══════════════════════════════════════╝\n`);
 
   /* ── Graceful shutdown ─────────────────────────────────── */
   let shuttingDown = false;
@@ -101,6 +106,7 @@ async function boot() {
     const heap = (mem.heapUsed / 1e6).toFixed(0);
     console.log(`\n[server] ${signal} received — RSS: ${rss}MB, Heap: ${heap}MB — shutting down gracefully…`);
     console.log(`[server] Active encoding jobs: ${encoder.getStatus().activeJobs}`);
+    server.close();  // stop accepting new connections
     watcher.stop();
     await encoder.stop();
     // Give ffmpeg processes time to exit after SIGTERM (up to 8s)
