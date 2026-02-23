@@ -9,3 +9,4 @@ data/thumbs/*.jpg
 *.md
 install.sh
 ecosystem.config.js
+Screenshots/

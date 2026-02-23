@@ -6,7 +6,7 @@ set -euo pipefail
 # ONE command, ZERO manual steps.
 #   bash install.sh
 # Installs: Node.js, MariaDB, ffmpeg, npm deps, creates DB,
-# .env, admin account, PM2, systemd — everything.
+# .env, admin account, and process manager (systemd or PM2).
 # ═══════════════════════════════════════════════════════════════
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -631,8 +631,8 @@ SyslogIdentifier=$APP_NAME
 
 # Hardening
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=$SCRIPT_DIR/data ${MEDIA_DIR:-}
+ProtectSystem=full
+ReadWritePaths=$SCRIPT_DIR/data
 PrivateTmp=true
 
 # Allow GPU access for hardware encoding
@@ -723,7 +723,7 @@ main() {
   if [[ "${INSTALL_ADMIN_STATUS:-}" == "created" ]]; then
     echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / ${INSTALL_ADMIN_PASS}"
   else
-    echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / (mot de passe existant conservé)"
+    echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / (existing password kept)"
   fi
   echo ""
   if [[ "${PROCESS_MANAGER:-}" == "systemd" ]]; then

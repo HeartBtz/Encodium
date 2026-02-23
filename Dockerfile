@@ -42,6 +42,7 @@ ENV NODE_ENV=production \
     DB_NAME=encodium \
     MEDIA_DIR=/media \
     ENCODE_DIR=/app/data/encoded \
+    THUMB_DIR=/app/data/thumbs \
     MAX_WORKERS=2
 
 EXPOSE 4000
