@@ -142,6 +142,8 @@ async function initSchema() {
     await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN priority INT DEFAULT 0 AFTER replace_original");
     // v1.2 — encode_skip flag on videos (size guard hit)
     await safeAlter(conn, "ALTER TABLE videos ADD COLUMN encode_skip TINYINT DEFAULT 0 COMMENT 'set when encode output was larger than original'");
+    // v1.3 — retry_count for SIGKILL recovery (prevents infinite retry loop)
+    await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN retry_count TINYINT UNSIGNED DEFAULT 0 AFTER progress");
 
     // ── Encoding Savings Ledger (persistent, survives queue clears) ──
     await conn.query(`

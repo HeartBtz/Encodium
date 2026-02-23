@@ -89,6 +89,9 @@ let _processing = false;
 let _processingTs = 0;          // timestamp when _processing was set
 const PROCESSING_TIMEOUT = 30000; // 30s safety valve
 let _watchdogTimer = null;
+const MAX_SIGNAL_RETRIES = 3;     // max SIGKILL recovery attempts before marking error
+const RETRY_BACKOFF_BASE = 10000; // 10s base backoff (×2 per retry)
+const _retryCooldown = new Set();  // job IDs in backoff — skipped by processQueue
 
 /* ─── Encoder capability cache ───────────────────────────────── */
 const encoderCaps = new Map();
@@ -332,7 +335,7 @@ async function processJob(job) {
   let encodeOpts = {};
   try { if (job.encode_options) encodeOpts = JSON.parse(job.encode_options); } catch { /* use defaults */ }
 
-  let devKey = 'cpu';
+  let devKey = job._preLockedDevKey || 'cpu';
   let tmpFile = null;
 
   try {
@@ -444,9 +447,12 @@ async function processJob(job) {
     }
 
     // ── Lock device & update status ──
-    devKey = devKeyFor(preset);
-    const gpuIdx = gpuIndexFor(preset);
-    lockDevice(devKey);
+    // Use pre-locked device if processQueue already locked it for us (prevents race)
+    devKey = job._preLockedDevKey || devKeyFor(preset);
+    const gpuIdx = job._preLockedGpuIdx ?? gpuIndexFor(preset);
+    if (!job._preLockedDevKey) lockDevice(devKey);
+    // Mark that we own the lock so finally always unlocks
+    job._deviceLocked = true;
 
     await pool.query(
       "UPDATE encode_jobs SET status='encoding', started_at=NOW(), file_size_before=? WHERE id=?",
@@ -459,7 +465,7 @@ async function processJob(job) {
       inputCodec, colorMeta, bitDepth, isHdr,
       caps: encCaps, badSubIndices, inputDuration,
     };
-    const { swArgs, hwArgs, actualOutFile } = ffmpegArgs.buildArgs(preset, inFile, tmpFile, probeInfo, encodeOpts);
+    const { swArgs, hwArgs, actualOutFile } = ffmpegArgs.buildArgs(preset, inFile, tmpFile, probeInfo, encodeOpts, gpuIdx);
 
     // buildArgs may adjust the output path (e.g. extension change) —
     // always use the path that ffmpeg will actually write to.
@@ -487,11 +493,29 @@ async function processJob(job) {
       return;
     }
 
-    // ffmpeg killed by external signal (PM2 restart, OOM, etc.) — return to pending for recovery
+    // ffmpeg killed by external signal (PM2 restart, OOM, etc.)
     if (result.code === null) {
-      jobLog.error('ffmpeg killed by external signal — returning job to pending for recovery');
-      await pool.query("UPDATE encode_jobs SET status='pending', error='ffmpeg killed by signal (server restart?)', started_at=NULL WHERE id=?", [job.id]);
-      broadcast('job_update', { id: job.id, status: 'pending' });
+      const retries = (job.retry_count || 0) + 1;
+      if (retries >= MAX_SIGNAL_RETRIES) {
+        const errMsg = `ffmpeg killed by external signal ${retries} time(s) — giving up (max ${MAX_SIGNAL_RETRIES} retries)`;
+        jobLog.error(errMsg);
+        await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?", [errMsg, job.id]);
+        broadcast('job_update', { id: job.id, status: 'error', error: errMsg });
+      } else {
+        const backoffMs = RETRY_BACKOFF_BASE * Math.pow(2, retries - 1);
+        jobLog.error(`ffmpeg killed by external signal — retry ${retries}/${MAX_SIGNAL_RETRIES} with ${backoffMs / 1000}s backoff`);
+        await pool.query(
+          "UPDATE encode_jobs SET status='pending', retry_count=?, error=CONCAT(COALESCE(error,''), ?), started_at=NULL WHERE id=?",
+          [retries, `\n[retry ${retries}] killed by signal at ${new Date().toISOString()}`, job.id]
+        );
+        broadcast('job_update', { id: job.id, status: 'pending' });
+        // Cooldown: prevent processQueue from picking this job immediately
+        _retryCooldown.add(job.id);
+        setTimeout(() => {
+          _retryCooldown.delete(job.id);
+          if (running) setImmediate(processQueue);
+        }, backoffMs);
+      }
       try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
       return;
     }
@@ -801,9 +825,20 @@ async function processQueue() {
     while (running && active.size < workerCount) {
       // Atomically claim ONE pending job by updating its status before firing processJob.
       // This prevents the same job being picked twice in rapid succession.
-      const [rows] = await pool.query(
-        "SELECT * FROM encode_jobs WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 1"
-      );
+      // Skip jobs in SIGKILL backoff cooldown
+      let rows;
+      if (_retryCooldown.size > 0) {
+        const cooldownIds = [..._retryCooldown];
+        const placeholders = cooldownIds.map(() => '?').join(',');
+        [rows] = await pool.query(
+          `SELECT * FROM encode_jobs WHERE status='pending' AND id NOT IN (${placeholders}) ORDER BY priority DESC, created_at ASC LIMIT 1`,
+          cooldownIds
+        );
+      } else {
+        [rows] = await pool.query(
+          "SELECT * FROM encode_jobs WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 1"
+        );
+      }
       if (!rows.length) break;
       const job = rows[0];
 
@@ -816,6 +851,22 @@ async function processQueue() {
 
       // Broadcast immediately so the frontend shows 'encoding' without waiting for probes
       broadcast('job_update', { id: job.id, status: 'encoding', video_id: job.video_id });
+
+      // Pre-lock GPU device in processQueue (before async processJob)
+      // to prevent race condition where two jobs both pick the same GPU
+      let preLockedDevKey = null;
+      let preLockedGpuIdx = undefined;
+      try {
+        const preset = JSON.parse(job.preset_json);
+        // Compute devKey and gpuIdx from a single GPU pick to keep them consistent
+        preLockedDevKey = devKeyFor(preset);
+        // Extract gpu index from devKey to avoid a second pickNvidiaGpu call
+        const nvidiaMatch = preLockedDevKey.match(/^nvidia_(\d+)$/);
+        preLockedGpuIdx = nvidiaMatch ? parseInt(nvidiaMatch[1], 10) : 0;
+        lockDevice(preLockedDevKey);
+        job._preLockedDevKey = preLockedDevKey;
+        job._preLockedGpuIdx = preLockedGpuIdx;
+      } catch { /* preset parse fail — processJob will handle it */ }
 
       // Add placeholder to active map so workerCount check works
       active.set(job.id, {
