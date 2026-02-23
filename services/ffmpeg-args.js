@@ -44,10 +44,9 @@ function mimeForExt(ext) {
  * @param {string} outFile - Output file path (may be adjusted)
  * @param {object} probeInfo - Probed media info { colorMeta, bitDepth, isHdr, caps, badSubIndices }
  * @param {object} [encodeOpts={}] - User encode options { container, downscale, tonemap }
- * @param {number} [gpuIdx=0] - GPU device index for hwaccel
  * @returns {{ swArgs: string[], hwArgs: string[]|null, container: string, pixFmt: string, isHdr: boolean, actualOutFile: string }}
  */
-function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}, gpuIdx = 0) {
+function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   const { colorMeta, bitDepth, isHdr, caps: encCaps, badSubIndices } = probeInfo;
 
   const isAv1 = preset.codec === 'av1';
@@ -182,7 +181,7 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}, gpuIdx =
   let hwArgs = null;
   if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
     hwArgs = [...commonHead,
-      '-hwaccel', 'cuda', '-hwaccel_device', String(gpuIdx),
+      '-hwaccel', 'cuda', '-hwaccel_device', '0',
       '-i', inFile, '-progress', 'pipe:1', ...tail];
   }
 

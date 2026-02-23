@@ -465,7 +465,7 @@ async function processJob(job) {
       inputCodec, colorMeta, bitDepth, isHdr,
       caps: encCaps, badSubIndices, inputDuration,
     };
-    const { swArgs, hwArgs, actualOutFile } = ffmpegArgs.buildArgs(preset, inFile, tmpFile, probeInfo, encodeOpts, gpuIdx);
+    const { swArgs, hwArgs, actualOutFile } = ffmpegArgs.buildArgs(preset, inFile, tmpFile, probeInfo, encodeOpts);
 
     // buildArgs may adjust the output path (e.g. extension change) —
     // always use the path that ffmpeg will actually write to.
