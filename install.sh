@@ -494,9 +494,9 @@ ENDJS
   fi
 }
 
-# ─── PM2 setup ─────────────────────────────────────────────
+# ─── PM2 setup (only used when systemd is NOT available) ───
 setup_pm2() {
-  log "Setting up PM2 process manager…"
+  log "Setting up PM2 process manager (no systemd detected)…"
 
   # Install PM2 globally if not present
   if ! command -v pm2 &>/dev/null; then
@@ -585,21 +585,25 @@ EOF
   fi
 }
 
-# ─── Systemd service (fallback / additional) ──────────────
+# ─── Systemd service (preferred on real hosts) ────────────
 setup_systemd() {
-  # Only attempt if systemctl is usable (skip in containers)
-  if ! command -v systemctl &>/dev/null; then
-    warn "systemctl not available — skipping systemd service"
-    return 0
-  fi
-
-  # Check if systemd is actually running (PID 1)
-  if [[ "$(cat /proc/1/comm 2>/dev/null)" != "systemd" ]]; then
-    warn "Not a systemd system — skipping systemd service"
-    return 0
-  fi
-
   log "Creating systemd service…"
+
+  # ── Remove PM2 if it was managing Encodium (avoid dual-manager conflict) ──
+  if command -v pm2 &>/dev/null; then
+    pm2 delete "$APP_NAME" 2>/dev/null || true
+    pm2 save --force 2>/dev/null || true
+    log "Removed Encodium from PM2 (systemd will manage it)"
+  fi
+
+  # Kill anything already on our port (stale processes from previous install)
+  local STALE_PID
+  STALE_PID=$(sudo fuser "${APP_PORT}/tcp" 2>/dev/null | xargs) || true
+  if [[ -n "$STALE_PID" ]]; then
+    log "Killing stale process(es) on port $APP_PORT: $STALE_PID"
+    sudo kill -9 $STALE_PID 2>/dev/null || true
+    sleep 1
+  fi
 
   local SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
   local RUN_USER
@@ -640,9 +644,22 @@ EOF
 
   sudo systemctl daemon-reload
   sudo systemctl enable "$APP_NAME" 2>/dev/null || true
-  ok "Systemd: service '$APP_NAME' created and enabled"
-  log "  Start: sudo systemctl start $APP_NAME"
+  sudo systemctl restart "$APP_NAME"
+  ok "Systemd: service '$APP_NAME' created, enabled and started"
   log "  Logs:  journalctl -u $APP_NAME -f"
+}
+
+# ─── Process management: pick ONE manager ─────────────────
+setup_process_manager() {
+  # Use systemd on real hosts, PM2 as fallback (containers, WSL1, etc.)
+  if command -v systemctl &>/dev/null && [[ "$(cat /proc/1/comm 2>/dev/null)" == "systemd" ]]; then
+    setup_systemd
+    export PROCESS_MANAGER="systemd"
+  else
+    warn "systemd not available — falling back to PM2"
+    setup_pm2
+    export PROCESS_MANAGER="pm2"
+  fi
 }
 
 # ─── Health check ──────────────────────────────────────────
@@ -659,7 +676,11 @@ health_check() {
     i=$((i + 1))
   done
   warn "Health check: Encodium not responding yet on port $APP_PORT"
-  warn "  Check logs: pm2 logs $APP_NAME"
+  if [[ "${PROCESS_MANAGER:-}" == "systemd" ]]; then
+    warn "  Check logs: journalctl -u $APP_NAME -f"
+  else
+    warn "  Check logs: pm2 logs $APP_NAME"
+  fi
 }
 
 # ─── Main ──────────────────────────────────────────────────
@@ -684,11 +705,10 @@ main() {
   create_admin
   echo ""
 
-  # Phase 3: Process management
+  # Phase 3: Process management (ONE manager — systemd or PM2, never both)
   log "Setting up process management…"
   echo ""
-  setup_pm2
-  setup_systemd
+  setup_process_manager
   echo ""
 
   # Phase 4: Verify
@@ -706,19 +726,19 @@ main() {
     echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / (mot de passe existant conservé)"
   fi
   echo ""
-  echo -e "  ${CYAN}PM2 commands:${NC}"
-  echo "    pm2 status              Show processes"
-  echo "    pm2 logs $APP_NAME        Follow logs"
-  echo "    pm2 restart $APP_NAME     Restart"
-  echo "    pm2 stop $APP_NAME        Stop"
-  echo ""
-  if [[ "$(cat /proc/1/comm 2>/dev/null)" == "systemd" ]]; then
-    echo -e "  ${CYAN}Systemd commands:${NC}"
+  if [[ "${PROCESS_MANAGER:-}" == "systemd" ]]; then
+    echo -e "  ${CYAN}Managed by: systemd${NC}"
     echo "    sudo systemctl status $APP_NAME"
     echo "    sudo systemctl restart $APP_NAME"
     echo "    journalctl -u $APP_NAME -f"
-    echo ""
+  else
+    echo -e "  ${CYAN}Managed by: PM2${NC}"
+    echo "    pm2 status              Show processes"
+    echo "    pm2 logs $APP_NAME        Follow logs"
+    echo "    pm2 restart $APP_NAME     Restart"
+    echo "    pm2 stop $APP_NAME        Stop"
   fi
+  echo ""
   echo -e "  ${CYAN}Docker alternative:${NC}"
   echo "    docker compose up -d"
   echo "    docker compose --profile gpu up -d   # NVIDIA GPU"
