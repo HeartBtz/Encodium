@@ -58,6 +58,7 @@ i18n.registerLang('zh', {
   'lib.skip_all': '所有视频',
   'lib.skip_hide': '隐藏已跳过',
   'lib.skip_only': '仅已跳过',
+  'lib.skip_tag': '编码跳过（输出更大）',
   'lib.unknown': '未知',
   'lib.sort_name': '名称',
   'lib.sort_size': '大小',

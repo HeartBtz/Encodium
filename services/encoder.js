@@ -21,6 +21,9 @@ const fsp = require('fs/promises');
 const db = require('../db');
 const gpuDetect = require('./gpu-detect');
 const logger = require('./logger');
+const ffprobe = require('./ffprobe');
+const ffmpegArgs = require('./ffmpeg-args');
+const webhook = require('./webhook');
 
 const execFileAsync = promisify(execFile);
 
@@ -110,240 +113,6 @@ async function probeEncoderCaps(encoderName) {
   encoderCaps.set(encoderName, caps);
   logger.debug('encoder', `Encoder caps for ${encoderName}`, caps);
   return caps;
-}
-
-/* ─── ffprobe helpers (ported from av1encoder.sh) ────────────── */
-
-async function ffprobeValue(filePath, streamSelect, entries) {
-  try {
-    const args = ['-v', 'error'];
-    if (streamSelect) args.push('-select_streams', streamSelect);
-    args.push('-show_entries', entries, '-of', 'default=nw=1:nk=1', '--', filePath);
-    const { stdout } = await execFileAsync('ffprobe', args, { timeout: 30000 });
-    return stdout.trim().split('\n')[0] || '';
-  } catch { return ''; }
-}
-
-async function ffprobeFirstVideoCodec(filePath) {
-  return ffprobeValue(filePath, 'v:0', 'stream=codec_name');
-}
-
-async function ffprobeColorMeta(filePath) {
-  const [transfer, primaries, space, range] = await Promise.all([
-    ffprobeValue(filePath, 'v:0', 'stream=color_transfer'),
-    ffprobeValue(filePath, 'v:0', 'stream=color_primaries'),
-    ffprobeValue(filePath, 'v:0', 'stream=color_space'),
-    ffprobeValue(filePath, 'v:0', 'stream=color_range'),
-  ]);
-  return { transfer, primaries, space, range };
-}
-
-async function ffprobeBitDepth(filePath) {
-  let b = await ffprobeValue(filePath, 'v:0', 'stream=bits_per_raw_sample');
-  if (b && b !== 'N/A' && b !== '0') return parseInt(b, 10);
-  const pf = await ffprobeValue(filePath, 'v:0', 'stream=pix_fmt');
-  if (/10|p010|p10/.test(pf)) return 10;
-  if (/12|p012|p12/.test(pf)) return 12;
-  return 8;
-}
-
-async function ffprobeSideDataTypes(filePath) {
-  try {
-    const args = ['-v', 'error', '-select_streams', 'v:0',
-      '-show_entries', 'stream_side_data=side_data_type',
-      '-of', 'default=nw=1:nk=1', '--', filePath];
-    const { stdout } = await execFileAsync('ffprobe', args, { timeout: 15000 });
-    return stdout.trim();
-  } catch { return ''; }
-}
-
-async function ffprobeDuration(filePath) {
-  const d = await ffprobeValue(filePath, null, 'format=duration');
-  if (!d || d === 'N/A') return 0;
-  return parseFloat(d) || 0;
-}
-
-async function ffprobeBadSubtitleIndices(filePath) {
-  try {
-    const args = ['-v', 'error', '-show_entries', 'stream=index,codec_type,codec_name',
-      '-of', 'csv=p=0', '--', filePath];
-    const { stdout } = await execFileAsync('ffprobe', args, { timeout: 15000 });
-    const bad = [];
-    for (const line of stdout.trim().split('\n')) {
-      if (!line) continue;
-      const parts = line.split(',');
-      if (parts[1] === 'subtitle') {
-        const codec = (parts[2] || '').toLowerCase();
-        if (!codec || codec === 'unknown' || codec === 'webvtt' || codec === 'none' || codec === 'n/a') {
-          bad.push(parts[0]);
-        }
-      }
-    }
-    return bad;
-  } catch { return []; }
-}
-
-async function ffprobeFullInfo(filePath) {
-  try {
-    const args = ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', '--', filePath];
-    const { stdout } = await execFileAsync('ffprobe', args, { timeout: 30000 });
-    return JSON.parse(stdout);
-  } catch { return null; }
-}
-
-/* ─── Build ffmpeg args (v2 — inspired by av1encoder.sh) ─────── */
-
-function buildArgsV2(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
-  const { colorMeta, bitDepth, isHdr, caps: encCaps, badSubIndices } = probeInfo;
-
-  const isAv1 = preset.codec === 'av1';
-
-  // Container selection: user choice > auto (MKV for AV1, MP4 otherwise)
-  let containerChoice = encodeOpts.container || 'auto';
-  let isMkv;
-  if (containerChoice === 'mkv') isMkv = true;
-  else if (containerChoice === 'mp4') isMkv = false;
-  else isMkv = isAv1; // auto
-  const container = isMkv ? 'matroska' : 'mp4';
-
-  // Adjust output extension if needed
-  const wantExt = isMkv ? '.mkv' : '.mp4';
-  if (!outFile.endsWith(wantExt)) {
-    outFile = outFile.replace(/\.(mkv|mp4|webm|avi|mov|ts)$/i, wantExt);
-  }
-
-  // Tonemapping: if requested and video is HDR, force SDR output
-  const doTonemap = !!(encodeOpts.tonemap && isHdr);
-  const pixFmt = (!doTonemap && (bitDepth >= 10 || isHdr)) ? 'p010le' : 'yuv420p';
-
-  // Downscale resolution
-  const downscale = encodeOpts.downscale ? parseInt(encodeOpts.downscale, 10) : 0;
-
-  const tail = [];
-  const vfFilters = [];
-
-  // Build video filters
-  if (doTonemap) {
-    // HDR→SDR tonemapping filter chain (zscale-based)
-    vfFilters.push(
-      'zscale=t=linear:npl=100',
-      'format=gbrpf32le',
-      'zscale=p=bt709',
-      'tonemap=tonemap=hable:desat=0',
-      'zscale=t=bt709:m=bt709:r=tv',
-      'format=yuv420p'
-    );
-  }
-  if (downscale > 0) {
-    // Scale to target height, keep aspect ratio (even width)
-    vfFilters.push(`scale=-2:${downscale}`);
-  }
-
-  // Map streams — MKV only supports video/audio/subtitles, so skip data & attachments
-  if (isMkv) {
-    tail.push('-map', '0:v', '-map', '0:a?', '-map', '0:s?');
-  } else {
-    tail.push('-map', '0');
-  }
-  for (const idx of badSubIndices) {
-    tail.push('-map', `-0:${idx}`);
-  }
-  tail.push('-map_metadata', '0', '-map_chapters', '0');
-
-  // Apply video filters if any
-  if (vfFilters.length) {
-    tail.push('-vf', vfFilters.join(','));
-  }
-
-  // Video: encode first video stream
-  tail.push('-c:v:0', preset.encoder);
-
-  // Preset (NVENC p1-p7 or named presets — CPU presets are set in rate control block)
-  const nvencPreset = preset.nvencPreset || 'p6';
-  if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
-    tail.push('-preset', nvencPreset);
-  } else if (preset.type === 'vaapi' || preset.type === 'vaapi_group') {
-    // VA-API doesn't use -preset
-  }
-
-  // 10-bit profile when needed
-  if (pixFmt === 'p010le' && encCaps.profile) {
-    tail.push('-profile:v', 'main10');
-  }
-
-  // Tune (only for NVENC — libx265 does NOT support 'hq' tune)
-  if (encCaps.tune && (preset.type === 'nvidia' || preset.type === 'nvidia_group')) {
-    tail.push('-tune', preset.nvencTune || 'hq');
-  }
-
-  // Rate control — adapted per encoder type from av1encoder.sh
-  const cq = preset.cq || (isAv1 ? 30 : 23);
-  if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
-    if (isAv1) {
-      if (encCaps.rc && encCaps.qp) {
-        tail.push('-rc', 'constqp', '-qp', String(cq));
-      } else if (encCaps.rc && encCaps.cq) {
-        tail.push('-rc', 'vbr', '-cq', String(cq));
-      }
-    } else {
-      if (encCaps.rc && encCaps.cq) {
-        tail.push('-rc', 'vbr_hq', '-cq', String(cq));
-      } else if (encCaps.rc && encCaps.qp) {
-        tail.push('-rc', 'constqp', '-qp', String(cq));
-      }
-    }
-  } else if (preset.type === 'vaapi' || preset.type === 'vaapi_group') {
-    tail.push('-rc_mode', 'CQP', '-global_quality', String(cq));
-  } else if (preset.type === 'qsv') {
-    tail.push('-global_quality', String(cq), '-preset', 'medium');
-  } else {
-    if (preset.encoder === 'libx265') tail.push('-crf', String(cq), '-preset', 'medium');
-    else if (preset.encoder === 'libsvtav1') tail.push('-crf', String(cq), '-preset', '6');
-    else if (preset.encoder === 'libaom-av1') tail.push('-crf', String(cq), '-cpu-used', '4');
-  }
-
-  // Pixel format
-  tail.push('-pix_fmt', pixFmt);
-
-  // Preserve color signaling (skip if tonemapping to SDR — handled by filter)
-  if (!doTonemap) {
-    const { transfer, primaries, space, range } = colorMeta;
-    if (primaries && primaries !== 'unknown' && primaries !== 'N/A') tail.push('-color_primaries', primaries);
-    if (transfer && transfer !== 'unknown' && transfer !== 'N/A') tail.push('-color_trc', transfer);
-    if (space && space !== 'unknown' && space !== 'N/A') tail.push('-colorspace', space);
-    if (range && range !== 'unknown' && range !== 'N/A') tail.push('-color_range', range);
-  }
-
-  // Spatial AQ (NVENC quality improvement)
-  if (encCaps.spatial_aq) tail.push('-spatial_aq', '1');
-  if (encCaps.aq_strength) tail.push('-aq-strength', '8');
-
-  // Timestamp preservation
-  tail.push('-fps_mode', 'passthrough');
-
-  // Audio/Subs: copy — Data/Attachments only for MP4 (MKV doesn't support them)
-  tail.push('-c:a', 'copy', '-c:s', 'copy');
-  if (!isMkv) tail.push('-c:d', 'copy', '-c:t', 'copy');
-
-  // Container-specific
-  if (!isMkv) tail.push('-movflags', '+faststart');
-  tail.push('-f', container, outFile);
-
-  // Common head for all commands
-  const commonHead = ['-hide_banner', '-nostdin', '-y', '-probesize', '50M', '-analyzeduration', '50M'];
-
-  // Software decode command
-  const swArgs = [...commonHead, '-i', inFile, '-progress', 'pipe:1', ...tail];
-
-  // Hardware decode command (NVIDIA only — no -hwaccel_output_format cuda!)
-  let hwArgs = null;
-  if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
-    hwArgs = [...commonHead,
-      '-hwaccel', 'cuda', '-hwaccel_device', '0',
-      '-i', inFile, '-progress', 'pipe:1', ...tail];
-  }
-
-  return { swArgs, hwArgs, container, pixFmt, isHdr, actualOutFile: outFile };
 }
 
 /* ─── GPU selection helpers ──────────────────────────────────── */
@@ -459,7 +228,7 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
   jobLog.info(`Output file size: ${(st.size / 1e6).toFixed(1)} MB`);
 
   // Check output video codec
-  const outCodec = await ffprobeValue(tmpFile, 'v:0', 'stream=codec_name');
+  const outCodec = await ffprobe.ffprobeValue(tmpFile, 'v:0', 'stream=codec_name');
   jobLog.info(`Output codec: ${outCodec} (expected: ${expectedCodec})`);
   if (!outCodec) {
     errors.push('ffprobe could not read output video codec');
@@ -470,7 +239,7 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
   }
 
   // Check output duration
-  const outDuration = await ffprobeDuration(tmpFile);
+  const outDuration = await ffprobe.duration(tmpFile);
   jobLog.info(`Output duration: ${outDuration}s (input: ${inputDuration}s)`);
   if (!outDuration || outDuration <= 0) {
     errors.push(`Output duration invalid: ${outDuration}`);
@@ -487,7 +256,7 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
 
 async function refreshVideoMeta(videoId, filePath, jobLog) {
   try {
-    const info = await ffprobeFullInfo(filePath);
+    const info = await ffprobe.fullInfo(filePath);
     if (!info) { jobLog.warn('Could not re-probe output for metadata refresh'); return; }
 
     const vStream = (info.streams || []).find(s => s.codec_type === 'video');
@@ -559,7 +328,7 @@ async function processJob(job) {
 
   // Parse encode options (container, downscale, tonemap)
   let encodeOpts = {};
-  try { if (job.encode_options) encodeOpts = JSON.parse(job.encode_options); } catch {}
+  try { if (job.encode_options) encodeOpts = JSON.parse(job.encode_options); } catch { /* use defaults */ }
 
   let devKey = 'cpu';
   let tmpFile = null;
@@ -604,13 +373,13 @@ async function processJob(job) {
     jobLog.info('--- Probing input ---');
     const [inputCodec, colorMeta, bitDepth, sideData, inputDuration, badSubIndices, fullInfo] =
       await Promise.all([
-        ffprobeFirstVideoCodec(video.file_path),
-        ffprobeColorMeta(video.file_path),
-        ffprobeBitDepth(video.file_path),
-        ffprobeSideDataTypes(video.file_path),
-        ffprobeDuration(video.file_path),
-        ffprobeBadSubtitleIndices(video.file_path),
-        ffprobeFullInfo(video.file_path),
+        ffprobe.firstVideoCodec(video.file_path),
+        ffprobe.colorMeta(video.file_path),
+        ffprobe.bitDepth(video.file_path),
+        ffprobe.sideDataTypes(video.file_path),
+        ffprobe.duration(video.file_path),
+        ffprobe.badSubtitleIndices(video.file_path),
+        ffprobe.fullInfo(video.file_path),
       ]);
 
     jobLog.info(`Input codec: ${inputCodec}`);
@@ -688,12 +457,12 @@ async function processJob(job) {
       inputCodec, colorMeta, bitDepth, isHdr,
       caps: encCaps, badSubIndices, inputDuration,
     };
-    const { swArgs, hwArgs, actualOutFile } = buildArgsV2(preset, inFile, tmpFile, probeInfo, encodeOpts);
+    const { swArgs, hwArgs, actualOutFile } = ffmpegArgs.buildArgs(preset, inFile, tmpFile, probeInfo, encodeOpts);
 
-    // buildArgsV2 may adjust the output path (e.g. extension change) —
+    // buildArgs may adjust the output path (e.g. extension change) —
     // always use the path that ffmpeg will actually write to.
     if (actualOutFile !== tmpFile) {
-      jobLog.warn(`Output path adjusted by buildArgsV2: ${tmpFile} → ${actualOutFile}`);
+      jobLog.warn(`Output path adjusted by buildArgs: ${tmpFile} → ${actualOutFile}`);
       tmpFile = actualOutFile;
     }
 
@@ -711,7 +480,7 @@ async function processJob(job) {
     if (result.cancelled) {
       await pool.query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=?", [job.id]);
       broadcast('job_update', { id: job.id, status: 'cancelled' });
-      try { await fsp.unlink(tmpFile); } catch {}
+      try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
       jobLog.info('Job cancelled by user');
       return;
     }
@@ -721,7 +490,7 @@ async function processJob(job) {
       jobLog.error('ffmpeg killed by external signal — returning job to pending for recovery');
       await pool.query("UPDATE encode_jobs SET status='pending', error='ffmpeg killed by signal (server restart?)', started_at=NULL WHERE id=?", [job.id]);
       broadcast('job_update', { id: job.id, status: 'pending' });
-      try { await fsp.unlink(tmpFile); } catch {}
+      try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
       return;
     }
 
@@ -736,7 +505,7 @@ async function processJob(job) {
       await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
         [errMsg.slice(0, 5000), job.id]);
       broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
-      try { await fsp.unlink(tmpFile); } catch {}
+      try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
       logger.error('encoder', `Job #${job.id} failed: ffmpeg exit code ${result.code}`);
       return;
     }
@@ -758,7 +527,7 @@ async function processJob(job) {
       await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
         [errMsg.slice(0, 5000), job.id]);
       broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
-      try { await fsp.unlink(tmpFile); } catch {}
+      try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
       logger.error('encoder', `Job #${job.id} failed validation: ${validationErrors[0]}`);
       return;
     }
@@ -766,7 +535,7 @@ async function processJob(job) {
     // ── Move to final path ──
     let finalPath = outFile;
     let newSize = 0;
-    try { const st = await fsp.stat(tmpFile); newSize = st.size; } catch {}
+    try { const st = await fsp.stat(tmpFile); newSize = st.size; } catch { /* stat unavailable */ }
 
     // ── Size guard — reject encodes that are larger than the original ──
     const origSize = video.size || 0;
@@ -775,7 +544,7 @@ async function processJob(job) {
       const msg = `Output (${(newSize / 1e6).toFixed(1)} MB) is ${pctBigger}% larger than original (${(origSize / 1e6).toFixed(1)} MB) — discarding encode, keeping original`;
       jobLog.warn(msg);
       logger.warn('encoder', `Job #${job.id}: ${msg}`);
-      try { await fsp.unlink(tmpFile); } catch {}
+      try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
       tmpFile = null; // prevent double-unlink in finally
       // Flag video so it won't be re-encoded by accident
       await pool.query('UPDATE videos SET encode_skip = 1 WHERE id = ?', [job.video_id]);
@@ -858,16 +627,16 @@ async function processJob(job) {
       await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
         [errMsg.slice(0, 5000), job.id]);
       broadcast('job_update', { id: job.id, status: 'error', error: e.message });
-    } catch {}
+    } catch { /* non-critical */ }
     logger.error('encoder', `Job #${job.id} crashed: ${e.message}`);
   } finally {
     unlockDevice(devKey);
     active.delete(job.id);
     clearProgressThrottle(job.id);
-    if (tmpFile) { try { await fsp.unlink(tmpFile); } catch {} }
+    if (tmpFile) { try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ } }
     await jobLog.close();
     // Fire webhook if queue is now empty
-    checkAndFireWebhook().catch(() => {});
+    webhook.checkAndFire().catch(() => {});
   }
 }
 
@@ -885,7 +654,7 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
         cancelled = true;
         if (currentProc) {
           currentProc.kill('SIGTERM');
-          setTimeout(() => { try { currentProc.kill('SIGKILL'); } catch {} }, 5000);
+          setTimeout(() => { try { currentProc.kill('SIGKILL'); } catch { /* process already exited */ } }, 5000);
         }
       },
     };
@@ -907,10 +676,9 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
         // Log the PID and listen for signals to diagnose external kills
         jobLog.info(`[${label}] ffmpeg PID: ${proc.pid}`);
 
-        let lastProgress = {};
+        const lastProgress = {};
         let stderrHead = '';   // first 5KB (captures init errors)
         let stderrTail = '';   // rolling last 30KB
-        let stderrTotal = 0;
         let lastDbProgressUpdate = 0;
 
         proc.stdout.on('data', (chunk) => {
@@ -941,7 +709,6 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
 
         proc.stderr.on('data', (d) => {
           const text = d.toString();
-          stderrTotal += text.length;
           // Keep the first 5KB to capture init/encoder errors
           if (stderrHead.length < 5000) stderrHead += text.slice(0, 5000 - stderrHead.length);
           // Rolling tail for runtime errors
@@ -979,7 +746,7 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
 
         jobLog.warn(`HW decode failed (exit ${result.code}), falling back to CPU decode...`);
         logger.warn('encoder', `Job #${job.id}: HW decode failed, retrying with CPU decode`);
-        try { await fsp.unlink(tmpFile); } catch {}
+        try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
       }
 
       // Software decode fallback
@@ -1006,50 +773,6 @@ async function isScheduleAllowed() {
   if (startH <= endH) return h >= startH && h < endH;
   // Overnight window (e.g. 22 → 6)
   return h >= startH || h < endH;
-}
-
-/* ─── Webhook notification ───────────────────────────────────── */
-
-async function checkAndFireWebhook() {
-  try {
-    const pool = db.getPool();
-    const [[{ cnt }]] = await pool.query("SELECT COUNT(*) as cnt FROM encode_jobs WHERE status IN ('pending','encoding')");
-    if (parseInt(cnt, 10) > 0) return; // still jobs running
-
-    const webhookEnabled = await db.getSetting('webhook_enabled', '0');
-    if (webhookEnabled !== '1') return;
-    const webhookUrl = await db.getSetting('webhook_url', '');
-    if (!webhookUrl) return;
-
-    // Gather summary
-    const [[summary]] = await pool.query(
-      "SELECT COUNT(*) as total, SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors FROM encode_jobs WHERE ended_at > DATE_SUB(NOW(), INTERVAL 1 DAY)"
-    );
-
-    const isDiscord = webhookUrl.includes('discord.com/api/webhooks');
-    const payload = isDiscord
-      ? { content: `✅ **Encodium** — File d'encodage terminée\n🎬 ${summary.done || 0} réussi(s) · ❌ ${summary.errors || 0} erreur(s)` }
-      : { event: 'queue_complete', done: summary.done || 0, errors: summary.errors || 0, total: summary.total || 0 };
-
-    const https = webhookUrl.startsWith('https') ? require('https') : require('http');
-    const body = JSON.stringify(payload);
-    const url = new URL(webhookUrl);
-    const options = {
-      hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
-      path: url.pathname + url.search, method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      timeout: 10000,
-    };
-    const req = https.request(options, () => {});
-    req.on('timeout', () => { req.destroy(); logger.warn('encoder', 'Webhook request timed out'); });
-    req.on('error', (e) => logger.warn('encoder', `Webhook error: ${e.message}`));
-    req.write(body);
-    req.end();
-
-    logger.info('encoder', `Webhook sent to ${url.hostname}`);
-  } catch (e) {
-    logger.warn('encoder', `Webhook check error: ${e.message}`);
-  }
 }
 
 /* ─── Queue processor ────────────────────────────────────────── */
@@ -1123,21 +846,21 @@ async function recoverStalledJobs() {
     const pids = execSync("pgrep -f 'ffmpeg.*\\.tmp\\.' 2>/dev/null || true").toString().trim();
     if (pids) {
       for (const pid of pids.split('\n').filter(Boolean)) {
-        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch {}
+        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* process already exited */ }
       }
       logger.warn('encoder', `Killed ${pids.split('\n').filter(Boolean).length} orphan ffmpeg process(es) from previous instance`);
     }
-  } catch {}
+  } catch { /* non-critical */ }
 
   // Clean up stale .tmp. files in ENCODE_DIR (partial encodes from crashed jobs)
   try {
     const files = await fsp.readdir(ENCODE_DIR).catch(() => []);
     const staleTemps = files.filter(f => /\.tmp\.\d+\./i.test(f));
     for (const f of staleTemps) {
-      try { await fsp.unlink(path.join(ENCODE_DIR, f)); } catch {}
+      try { await fsp.unlink(path.join(ENCODE_DIR, f)); } catch { /* cleanup — file may not exist */ }
     }
     if (staleTemps.length) logger.info('encoder', `Cleaned up ${staleTemps.length} stale temp file(s)`);
-  } catch {}
+  } catch { /* non-critical */ }
 
   try {
     const pool = db.getPool();
@@ -1257,7 +980,7 @@ async function cancelAll() {
   // 2. Kill all actively encoding ffmpeg processes
   const activeIds = [...active.keys()];
   for (const [jobId, entry] of active.entries()) {
-    try { entry.cancel(); } catch {}
+    try { entry.cancel(); } catch { /* already cancelled */ }
     // Immediately mark in DB as cancelled (don't wait for processJob to handle it)
     await pool.query(
       "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error='Annulé par l\'utilisateur' WHERE id=? AND status='encoding'",
@@ -1276,7 +999,7 @@ async function cancelAll() {
 async function forceKillJob(jobId) {
   const entry = active.get(jobId);
   if (entry && entry.proc) {
-    try { entry.proc.kill('SIGKILL'); } catch {}
+    try { entry.proc.kill('SIGKILL'); } catch { /* process already exited */ }
     logger.warn('encoder', `Job #${jobId} force-killed (SIGKILL)`);
   }
   // Also try to kill by PID pattern (orphan ffmpeg for this job)
@@ -1285,11 +1008,11 @@ async function forceKillJob(jobId) {
     const pids = execSync(`pgrep -f 'ffmpeg.*\\.tmp\\.${jobId}\\.' 2>/dev/null || true`).toString().trim();
     if (pids) {
       for (const pid of pids.split('\n').filter(Boolean)) {
-        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch {}
+        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* process already exited */ }
       }
       logger.warn('encoder', `Force-killed ${pids.split('\n').filter(Boolean).length} orphan ffmpeg process(es) for job #${jobId}`);
     }
-  } catch {}
+  } catch { /* non-critical */ }
   // Mark as cancelled in DB
   const pool = db.getPool();
   await pool.query(
@@ -1321,8 +1044,8 @@ async function deleteJob(jobId) {
   const [[job]] = await pool.query('SELECT * FROM encode_jobs WHERE id=?', [jobId]);
   if (!job) throw new Error('Job not found');
   if (job.status === 'encoding') cancelJob(jobId);
-  if (job.output_path) { try { await fsp.unlink(job.output_path); } catch {} }
-  try { await fsp.unlink(path.join(LOG_DIR, `job_${jobId}.log`)); } catch {}
+  if (job.output_path) { try { await fsp.unlink(job.output_path); } catch { /* cleanup — file may not exist */ } }
+  try { await fsp.unlink(path.join(LOG_DIR, `job_${jobId}.log`)); } catch { /* cleanup — file may not exist */ }
   await pool.query('DELETE FROM encode_jobs WHERE id=?', [jobId]);
   return true;
 }
@@ -1436,11 +1159,11 @@ async function stop() {
         "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error='Arrêt du serveur' WHERE id=? AND status='encoding'",
         [jobId]
       );
-    } catch {}
+    } catch { /* non-critical */ }
   }
   // Now kill ffmpeg processes
   for (const e of active.values()) {
-    try { e.cancel(); } catch {}
+    try { e.cancel(); } catch { /* already cancelled */ }
   }
   logger.info('encoder', `Encoder stopped — cancelled ${active.size} active job(s): [${jobIds.join(', ')}]`);
 }

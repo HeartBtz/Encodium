@@ -58,6 +58,7 @@ i18n.registerLang('es', {
   'lib.skip_all': 'Todos los vídeos',
   'lib.skip_hide': 'Ocultar omitidos',
   'lib.skip_only': 'Solo omitidos',
+  'lib.skip_tag': 'Codificación omitida (resultado más grande)',
   'lib.unknown': 'Desconocido',
   'lib.sort_name': 'Nombre',
   'lib.sort_size': 'Tamaño',

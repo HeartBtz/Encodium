@@ -99,7 +99,7 @@ async function boot() {
     while (encoder.getStatus().activeJobs > 0 && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 500));
     }
-    try { await db.getPool().end(); } catch {}
+    try { await db.getPool().end(); } catch { /* pool already closed */ }
     console.log('[server] Cleanup complete. Exiting.');
     process.exit(0);
   };

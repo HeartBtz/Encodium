@@ -51,6 +51,7 @@ i18n.registerLang('pl', {
   'lib.skip_all': 'Wszystkie filmy',
   'lib.skip_hide': 'Ukryj pominięte',
   'lib.skip_only': 'Tylko pominięte',
+  'lib.skip_tag': 'Kodowanie pominięte (wynik większy)',
   'lib.unknown': 'Nieznany',
   'lib.sort_name': 'Nazwa',
   'lib.sort_size': 'Rozmiar',

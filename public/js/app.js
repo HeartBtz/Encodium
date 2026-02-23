@@ -16,7 +16,7 @@
   let libTotal = 0;
   let lastClickedCardIdx = -1;
   let libOrder = 'desc';
-  let libSelected = new Set();
+  const libSelected = new Set();
   let libSearchTimer = null;
 
   // Encode
@@ -71,7 +71,7 @@
       <div id="enc-debug-header">
         <span>🔍 Encodium Net Debug</span>
         <span id="enc-debug-stats"></span>
-        <button id="enc-debug-close" title="Fermer (Ctrl+Shift+D)">✕</button>
+        <button id="enc-debug-close" title="Close (Ctrl+Shift+D)">✕</button>
       </div>
       <div id="enc-debug-body"></div>`;
     document.body.appendChild(panel);
@@ -130,13 +130,15 @@
     bodyEl.innerHTML = last30.map(e => {
       const cls = e.error ? 'enc-err' : (e.duration > 3000 ? 'enc-slow' : '');
       const statusColor = e.status === 200 ? '#4c4' : (typeof e.status === 'number' && e.status >= 400 ? '#f55' : '#f80');
+      const safePath = escHtml(e.path);
+      const safeErr = e.error ? escHtml(e.error) : '';
       return `<div class="enc-dl ${cls}">
-        <span class="dl-time">${e.time}</span>
-        <span class="dl-method">${e.method}</span>
-        <span class="dl-path" title="${e.path}">${e.path}</span>
+        <span class="dl-time">${escHtml(e.time)}</span>
+        <span class="dl-method">${escHtml(e.method)}</span>
+        <span class="dl-path" title="${safePath}">${safePath}</span>
         <span class="dl-status" style="color:${statusColor}">${e.status}</span>
         <span class="dl-ms">${e.duration}ms</span>
-        ${e.error ? `<span class="dl-err" title="${e.error}">${e.error}</span>` : ''}
+        ${e.error ? `<span class="dl-err" title="${safeErr}">${safeErr}</span>` : ''}
       </div>`;
     }).join('');
 
@@ -388,25 +390,25 @@
       sseRetries = 0;
     });
     sse.addEventListener('job_update', e => {
-      try { handleJobUpdate(JSON.parse(e.data)); } catch {}
+      try { handleJobUpdate(JSON.parse(e.data)); } catch { /* malformed SSE data */ }
     });
     sse.addEventListener('job_progress', e => {
-      try { handleJobProgress(JSON.parse(e.data)); } catch {}
+      try { handleJobProgress(JSON.parse(e.data)); } catch { /* malformed SSE data */ }
     });
     sse.addEventListener('encoder_state', e => {
       try {
         const d = JSON.parse(e.data);
         if (typeof d.paused === 'boolean') { _queuePaused = d.paused; updatePauseButton(); }
         scheduleLoadEncodeQueue(300);
-      } catch {}
+      } catch { /* malformed SSE data */ }
     });
     sse.addEventListener('log', e => {
-      try { addLogEntry(JSON.parse(e.data)); } catch {}
+      try { addLogEntry(JSON.parse(e.data)); } catch { /* malformed SSE data */ }
     });
     sse.addEventListener('pipeline_status', e => {
-      try { handlePipelineStatus(JSON.parse(e.data)); } catch {}
+      try { handlePipelineStatus(JSON.parse(e.data)); } catch { /* malformed SSE data */ }
     });
-    sse.onerror = (ev) => {
+    sse.onerror = (_ev) => {
       const state = ['CONNECTING','OPEN','CLOSED'][sse.readyState] || sse.readyState;
       console.warn(`[SSE] ✖ Error — readyState=${state}`);
       _logNet({ time: _ts(), method: 'SSE', path: '/events', status: 'ERROR', duration: 0, error: `readyState=${state}, retry=${sseRetries + 1}` });
@@ -436,7 +438,7 @@
   let _pipelineRefreshTimer = null;
 
   function handlePipelineStatus(data) {
-    const { step, status } = data;
+    const { status } = data;
     // When a step finishes, schedule a debounced refresh so we don't flood
     if (status === 'done') {
       debouncedPipelineRefresh();
@@ -601,7 +603,7 @@
         },
         options: chartOpts,
       });
-    } catch {}
+    } catch { /* non-critical */ }
   }
 
 
@@ -634,7 +636,7 @@
         o.textContent = `${f.folder} (${f.count})`;
         sel.appendChild(o);
       });
-    } catch {}
+    } catch { /* non-critical */ }
   }
 
   async function loadLibrary() {
@@ -682,7 +684,7 @@
             <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="Lire">▶</button>
           </div>
           <span class="mb-card-size">${fmtSize(v.size)}</span>
-          ${v.encode_skip ? '<span class="mb-card-skip" title="Encodage ignoré (résultat plus gros)">⚠ skip</span>' : ''}
+          ${v.encode_skip ? `<span class="mb-card-skip" title="${escHtml(t('lib.skip_tag'))}">⚠ skip</span>` : ''}
           ${v.encode_failed ? `<span class="mb-card-fail" title="${escHtml(t('lib.fail_tag'))}">❌ fail</span>` : ''}
           <div class="mb-card-info">
             <div class="mb-card-name" title="${escHtml(v.filename)}">${escHtml(v.filename)}</div>
@@ -790,8 +792,8 @@
       // Truncated pagination: 1 ... 4 5 6 ... 50
       const range = [];
       range.push(1);
-      let lo = Math.max(2, current - 2);
-      let hi = Math.min(pages - 1, current + 2);
+      const lo = Math.max(2, current - 2);
+      const hi = Math.min(pages - 1, current + 2);
       if (lo > 2) range.push(-1); // ellipsis
       for (let p = lo; p <= hi; p++) range.push(p);
       if (hi < pages - 1) range.push(-1); // ellipsis
@@ -974,7 +976,6 @@
       const fname = j.filename || truncPath(j.file_path) || `#${j.video_id}`;
       const meta = [j.preset_name || j.preset_id, j.status].filter(Boolean).join(' · ');
       const showProgress = j.status === 'encoding';
-      const showActions = j.status === 'pending' || j.status === 'error';
       return `
         <div class="enc-job" data-jid="${j.id}">
           <span class="enc-job-status ${dotClass}"></span>
@@ -995,11 +996,11 @@
             </div>`;
           })() : ''}
           <div class="enc-job-actions">
-            ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="Priorité +">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="Priorité −">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
+            ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="Priority +">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="Priority −">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
             ${j.status === 'encoding' ? `<button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})" title="${t('queue.cancel_job')}">✕</button><button class="btn btn-xs btn-ghost" onclick="encAction('force-kill',${j.id})" title="${t('queue.force_kill')}">💀</button>` : ''}
             ${j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
-            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
-            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="Voir le log">📋</button>` : ''}
+            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="View log">📋</button>` : ''}
+            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="View log">📋</button>` : ''}
             ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('delete',${j.id})">🗑</button>` : ''}
           </div>
         </div>`;
@@ -1318,7 +1319,7 @@
     try {
       const entries = await api('/logs?limit=200');
       if (Array.isArray(entries)) entries.forEach(e => { logEntries.push(e); });
-    } catch {}
+    } catch { /* non-critical */ }
   }
 
   $('#log-level-filter').addEventListener('change', renderLogs);
@@ -1340,18 +1341,18 @@
       $('#schedule-start').value = sched.start;
       $('#schedule-end').value = sched.end;
       $('#schedule-fields').style.display = sched.enabled ? 'flex' : 'none';
-    } catch {}
+    } catch { /* non-critical */ }
     // Webhook
     try {
       const notif = await api('/settings/notifications');
       $('#webhook-enabled').checked = notif.enabled;
       $('#webhook-url').value = notif.url || '';
-    } catch {}
+    } catch { /* non-critical */ }
     // Auto-scan interval
     try {
       const as = await api('/settings/autoscan');
       $('#autoscan-interval').value = String(as.interval);
-    } catch {}
+    } catch { /* non-critical */ }
     // Media sources
     loadSources();
     // Custom presets
@@ -1487,7 +1488,7 @@
     try {
       const data = await api(`/browse?path=${encodeURIComponent(browsePath)}`);
       if (data.parent) loadBrowse(data.parent);
-    } catch {}
+    } catch { /* non-critical */ }
   });
 
   $('#browse-select').addEventListener('click', () => {
@@ -1540,7 +1541,7 @@
             <button class="btn btn-xs btn-danger" onclick="deleteCustomPreset(${p.id})">🗑</button>
           </div>
         </div>`).join('');
-    } catch {}
+    } catch { /* non-critical */ }
   }
 
   window.deleteCustomPreset = async function(id) {

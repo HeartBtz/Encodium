@@ -78,6 +78,7 @@ i18n.registerLang('en', {
   'lib.fail_hide': 'Hide failed',
   'lib.fail_only': 'Failed only',
   'lib.fail_tag': 'Encoding failure detected',
+  'lib.skip_tag': 'Encoding skipped (output larger)',
   'lib.unknown': 'Unknown',
   'lib.sort_name': 'Name',
   'lib.sort_size': 'Size',

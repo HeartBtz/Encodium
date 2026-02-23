@@ -78,6 +78,7 @@ i18n.registerLang('fr', {
   'lib.fail_hide': 'Masquer échecs',
   'lib.fail_only': 'Échecs uniquement',
   'lib.fail_tag': 'Échec d\'encodage détecté',
+  'lib.skip_tag': 'Encodage ignoré (résultat plus gros)',
   'lib.unknown': 'Inconnu',
   'lib.sort_name': 'Nom',
   'lib.sort_size': 'Taille',

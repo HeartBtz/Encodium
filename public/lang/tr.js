@@ -51,6 +51,7 @@ i18n.registerLang('tr', {
   'lib.skip_all': 'Tüm videolar',
   'lib.skip_hide': 'Atlananları gizle',
   'lib.skip_only': 'Sadece atlananlar',
+  'lib.skip_tag': 'Kodlama atlandı (çıktı daha büyük)',
   'lib.unknown': 'Bilinmiyor',
   'lib.sort_name': 'Ad',
   'lib.sort_size': 'Boyut',

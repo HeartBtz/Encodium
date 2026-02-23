@@ -1,0 +1,38 @@
+{
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "caughtErrors": "none" }],
+    "no-constant-condition": "warn",
+    "no-empty": ["warn", { "allowEmptyCatch": true }],
+    "no-var": "error",
+    "prefer-const": "warn",
+    "eqeqeq": ["warn", "smart"],
+    "no-throw-literal": "error",
+    "no-unreachable": "error",
+    "no-duplicate-case": "error",
+    "no-fallthrough": "warn",
+    "no-redeclare": "error",
+    "no-shadow": "warn",
+    "curly": ["warn", "multi-line"],
+    "no-eval": "error",
+    "no-implied-eval": "error"
+  },
+  "overrides": [
+    {
+      "files": ["public/**/*.js"],
+      "env": {
+        "browser": true,
+        "node": false
+      },
+      "globals": {
+        "Chart": "readonly"
+      }
+    }
+  ]
+}

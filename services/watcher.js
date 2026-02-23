@@ -168,7 +168,7 @@ function startWatchingSource(srcPath) {
 function stopWatchingSource(srcPath) {
   const w = activeWatchers.get(srcPath);
   if (w) {
-    try { w.close(); } catch {}
+    try { w.close(); } catch { /* already closed */ }
     activeWatchers.delete(srcPath);
     logger.info('watcher', `Stopped watching: ${srcPath}`);
   }

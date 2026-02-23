@@ -58,6 +58,7 @@ i18n.registerLang('ja', {
   'lib.skip_all': 'すべての動画',
   'lib.skip_hide': 'スキップを非表示',
   'lib.skip_only': 'スキップのみ',
+  'lib.skip_tag': 'エンコードスキップ（出力が大きい）',
   'lib.unknown': '不明',
   'lib.sort_name': '名前',
   'lib.sort_size': 'サイズ',

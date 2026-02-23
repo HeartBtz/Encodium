@@ -58,6 +58,7 @@ i18n.registerLang('ar', {
   'lib.skip_all': 'جميع الفيديوهات',
   'lib.skip_hide': 'إخفاء المتخطاة',
   'lib.skip_only': 'المتخطاة فقط',
+  'lib.skip_tag': 'تم تخطي الترميز (الإخراج أكبر)',
   'lib.unknown': 'غير معروف',
   'lib.sort_name': 'الاسم',
   'lib.sort_size': 'الحجم',

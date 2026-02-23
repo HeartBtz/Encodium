@@ -58,6 +58,7 @@ i18n.registerLang('ko', {
   'lib.skip_all': '모든 동영상',
   'lib.skip_hide': '건너뛴 항목 숨기기',
   'lib.skip_only': '건너뛴 항목만',
+  'lib.skip_tag': '인코딩 건너뜀 (출력이 더 큼)',
   'lib.unknown': '알 수 없음',
   'lib.sort_name': '이름',
   'lib.sort_size': '크기',

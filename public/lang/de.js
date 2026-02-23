@@ -58,6 +58,7 @@ i18n.registerLang('de', {
   'lib.skip_all': 'Alle Videos',
   'lib.skip_hide': 'Übersprungene ausblenden',
   'lib.skip_only': 'Nur übersprungene',
+  'lib.skip_tag': 'Kodierung übersprungen (Ergebnis größer)',
   'lib.unknown': 'Unbekannt',
   'lib.sort_name': 'Name',
   'lib.sort_size': 'Größe',

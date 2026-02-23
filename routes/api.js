@@ -16,12 +16,64 @@ const scanner    = require('../scanner');
 const gpuDetect  = require('../services/gpu-detect');
 const encoder    = require('../services/encoder');
 const logger     = require('../services/logger');
+const { mimeForExt } = require('../services/ffmpeg-args');
 const { signToken, verifyToken, requireAuth, requireAdmin } = require('../middleware/auth');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 /** Return a safe error message — hides internals in production */
 function safeError(e, fallback = 'Internal server error') {
   return IS_PROD ? fallback : (e.message || fallback);
+}
+
+/* ─── Shared SQL & query helpers ─────────────────────────── */
+
+/** Sub-query: video has at least one 'error' job and no 'done' job */
+const FAIL_EXISTS_SQL = "(EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status = 'error') AND NOT EXISTS (SELECT 1 FROM encode_jobs ej2 WHERE ej2.video_id = v.id AND ej2.status = 'done'))";
+
+/** Column whitelist for ORDER BY (prevents SQL injection) */
+const SORT_COLUMN_MAP = {
+  filename: 'v.filename', folder: 'v.folder', size: 'v.size',
+  duration: 'v.duration', codec: 'v.codec', width: 'v.width', created_at: 'v.created_at',
+};
+
+/**
+ * Build WHERE clause + params from video filter query-string values.
+ * Shared between /videos and /videos/ids to eliminate duplication.
+ */
+function buildVideoFilterQuery({ q = '', folder = '', codec = '', skip = '', fail = '' }) {
+  const where = [];
+  const params = [];
+
+  if (q) {
+    where.push('(v.filename LIKE ? OR v.folder LIKE ?)');
+    const like = `%${q}%`;
+    params.push(like, like);
+  }
+  if (folder) {
+    where.push('v.folder = ?');
+    params.push(folder);
+  }
+  if (codec) {
+    if (codec === 'unknown') {
+      where.push("(v.codec IS NULL OR v.codec = '')");
+    } else {
+      where.push('v.codec = ?');
+      params.push(codec);
+    }
+  }
+  if (skip === 'hide') {
+    where.push('(v.encode_skip IS NULL OR v.encode_skip = 0)');
+  } else if (skip === 'only') {
+    where.push('v.encode_skip = 1');
+  }
+  if (fail === 'hide') {
+    where.push(`NOT ${FAIL_EXISTS_SQL}`);
+  } else if (fail === 'only') {
+    where.push(FAIL_EXISTS_SQL);
+  }
+
+  const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return { whereSQL, params };
 }
 
 /* ─── Anti-brute-force limiter for login ──────────────────── */
@@ -142,56 +194,9 @@ router.get('/thumbs/progress', requireAuth, (req, res) => {
 router.get('/videos', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
-    const FAIL_EXISTS_SQL = "(EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status = 'error') AND NOT EXISTS (SELECT 1 FROM encode_jobs ej2 WHERE ej2.video_id = v.id AND ej2.status = 'done'))";
-    const {
-      q = '',              // search query (filename / folder)
-      folder = '',         // exact folder filter
-      codec = '',          // video_codec filter
-      skip = '',           // encode_skip filter: 'hide' | 'only' | '' (all)
-      fail = '',           // encode error filter: 'hide' | 'only' | '' (all)
-      sort = 'filename',   // sort column
-      order = 'asc',       // asc | desc
-      page = 1,
-      limit = 50,
-    } = req.query;
+    const { sort = 'filename', order = 'asc', page = 1, limit = 50 } = req.query;
+    const { whereSQL, params } = buildVideoFilterQuery(req.query);
 
-    const where = [];
-    const params = [];
-
-    if (q) {
-      where.push('(v.filename LIKE ? OR v.folder LIKE ?)');
-      const like = `%${q}%`;
-      params.push(like, like);
-    }
-    if (folder) {
-      where.push('v.folder = ?');
-      params.push(folder);
-    }
-    if (codec) {
-      if (codec === 'unknown') {
-        where.push("(v.codec IS NULL OR v.codec = '')");
-      } else {
-        where.push('v.codec = ?');
-        params.push(codec);
-      }
-    }
-    if (skip === 'hide') {
-      where.push('(v.encode_skip IS NULL OR v.encode_skip = 0)');
-    } else if (skip === 'only') {
-      where.push('v.encode_skip = 1');
-    }
-    if (fail === 'hide') {
-      where.push(`NOT ${FAIL_EXISTS_SQL}`);
-    } else if (fail === 'only') {
-      where.push(FAIL_EXISTS_SQL);
-    }
-
-    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-    const SORT_COLUMN_MAP = {
-      filename: 'v.filename', folder: 'v.folder', size: 'v.size',
-      duration: 'v.duration', codec: 'v.codec', width: 'v.width', created_at: 'v.created_at',
-    };
     const sortExpr = SORT_COLUMN_MAP[sort] || SORT_COLUMN_MAP.filename;
     const sortDir = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
@@ -215,27 +220,7 @@ router.get('/videos', requireAuth, async (req, res) => {
 router.get('/videos/ids', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
-    const FAIL_EXISTS_SQL = "(EXISTS (SELECT 1 FROM encode_jobs ej WHERE ej.video_id = v.id AND ej.status = 'error') AND NOT EXISTS (SELECT 1 FROM encode_jobs ej2 WHERE ej2.video_id = v.id AND ej2.status = 'done'))";
-    const { q = '', folder = '', codec = '', skip = '', fail = '' } = req.query;
-    const where = [];
-    const params = [];
-    if (q) { where.push('(v.filename LIKE ? OR v.folder LIKE ?)'); const like = `%${q}%`; params.push(like, like); }
-    if (folder) { where.push('v.folder = ?'); params.push(folder); }
-    if (codec) {
-      if (codec === 'unknown') where.push("(v.codec IS NULL OR v.codec = '')");
-      else { where.push('v.codec = ?'); params.push(codec); }
-    }
-    if (skip === 'hide') {
-      where.push('(v.encode_skip IS NULL OR v.encode_skip = 0)');
-    } else if (skip === 'only') {
-      where.push('v.encode_skip = 1');
-    }
-    if (fail === 'hide') {
-      where.push(`NOT ${FAIL_EXISTS_SQL}`);
-    } else if (fail === 'only') {
-      where.push(FAIL_EXISTS_SQL);
-    }
-    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const { whereSQL, params } = buildVideoFilterQuery(req.query);
     const [rows] = await pool.query(`SELECT v.id FROM videos v ${whereSQL}`, params);
     res.json({ ids: rows.map(r => r.id) });
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
@@ -258,7 +243,7 @@ router.post('/videos/delete', requireAdmin, async (req, res) => {
     const placeholders = ids.map(() => '?').join(',');
     const [rows] = await pool.query(`SELECT id, file_path FROM videos WHERE id IN (${placeholders})`, ids);
     logger.info('api', `Delete request: ${ids.length} id(s) sent, ${rows.length} found in DB`);
-    let deleted = 0, fileErrors = [];
+    const fileErrors = [];
     for (const v of rows) {
       // Delete physical file
       if (v.file_path) {
@@ -268,18 +253,17 @@ router.post('/videos/delete', requireAdmin, async (req, res) => {
       }
       // Delete thumbnail
       const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${v.id}.jpg`);
-      try { await fsp.unlink(thumbPath); } catch {}
-      deleted++;
+      try { await fsp.unlink(thumbPath); } catch { /* already gone */ }
     }
     // Batch delete from DB (cascade handles encode_jobs via FK)
-    if (deleted > 0) {
+    if (rows.length > 0) {
       const delIds = rows.map(v => v.id);
       const ph = delIds.map(() => '?').join(',');
       await pool.query(`DELETE FROM encode_jobs WHERE video_id IN (${ph})`, delIds);
       await pool.query(`DELETE FROM videos WHERE id IN (${ph})`, delIds);
     }
-    logger.info('api', `Deleted ${deleted} video(s) (requested: ${ids.length})`);
-    res.json({ deleted, fileErrors });
+    logger.info('api', `Deleted ${rows.length} video(s) (requested: ${ids.length})`);
+    res.json({ deleted: rows.length, fileErrors });
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
@@ -356,7 +340,10 @@ router.get('/thumb/:id', async (req, res) => {
   const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${id}.jpg`);
 
   // Already exists → serve immediately
-  if (fs.existsSync(thumbPath)) return res.sendFile(thumbPath);
+  try {
+    await fsp.access(thumbPath, fs.constants.F_OK);
+    return res.sendFile(thumbPath);
+  } catch { /* not found — continue below */ }
 
   // Thumb missing → kick off background generation and return 202 immediately.
   // This avoids blocking the HTTP connection (and the browser's per-origin
@@ -398,17 +385,19 @@ router.get('/stream/:id', async (req, res) => {
 
     const video = rows[0];
     const filePath = video.file_path;
-    const fileSize = video.size || fs.statSync(filePath).size;
+    let fileSize = video.size;
+    if (!fileSize) {
+      const st = await fsp.stat(filePath);
+      fileSize = st.size;
+    }
 
+    const mime = mimeForExt(path.extname(filePath));
     const range = req.headers.range;
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 5 * 1024 * 1024, fileSize - 1);
       const chunkSize = end - start + 1;
-
-      const ext = path.extname(filePath).toLowerCase();
-      const mime = ext === '.mkv' ? 'video/x-matroska' : ext === '.webm' ? 'video/webm' : 'video/mp4';
 
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
@@ -418,8 +407,6 @@ router.get('/stream/:id', async (req, res) => {
       });
       fs.createReadStream(filePath, { start, end }).pipe(res);
     } else {
-      const ext = path.extname(filePath).toLowerCase();
-      const mime = ext === '.mkv' ? 'video/x-matroska' : ext === '.webm' ? 'video/webm' : 'video/mp4';
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': mime,
@@ -455,7 +442,8 @@ router.get('/encode/history', requireAuth, async (req, res) => {
 
 router.post('/encode/enqueue', requireAuth, async (req, res) => {
   try {
-    let { videoIds, presetId, replaceOriginal, container, downscale, tonemap, force } = req.body;
+    let { presetId, container, downscale, tonemap } = req.body;
+    const { videoIds, replaceOriginal, force } = req.body;
     let customCq;
     if (!presetId) return res.status(400).json({ error: 'presetId required' });
     const ids = Array.isArray(videoIds) ? videoIds : [videoIds];

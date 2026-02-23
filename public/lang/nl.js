@@ -51,6 +51,7 @@ i18n.registerLang('nl', {
   'lib.skip_all': 'Alle videos',
   'lib.skip_hide': 'Overgeslagen verbergen',
   'lib.skip_only': 'Alleen overgeslagen',
+  'lib.skip_tag': 'Codering overgeslagen (resultaat groter)',
   'lib.unknown': 'Onbekend',
   'lib.sort_name': 'Naam',
   'lib.sort_size': 'Grootte',

@@ -58,6 +58,7 @@ i18n.registerLang('it', {
   'lib.skip_all': 'Tutti i video',
   'lib.skip_hide': 'Nascondi saltati',
   'lib.skip_only': 'Solo saltati',
+  'lib.skip_tag': 'Codifica saltata (risultato più grande)',
   'lib.unknown': 'Sconosciuto',
   'lib.sort_name': 'Nome',
   'lib.sort_size': 'Dimensione',

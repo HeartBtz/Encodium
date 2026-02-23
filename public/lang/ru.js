@@ -58,6 +58,7 @@ i18n.registerLang('ru', {
   'lib.skip_all': 'Все видео',
   'lib.skip_hide': 'Скрыть пропущенные',
   'lib.skip_only': 'Только пропущенные',
+  'lib.skip_tag': 'Кодирование пропущено (результат больше)',
   'lib.unknown': 'Неизвестно',
   'lib.sort_name': 'Имя',
   'lib.sort_size': 'Размер',

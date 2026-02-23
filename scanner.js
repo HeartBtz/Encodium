@@ -197,7 +197,7 @@ async function removeSource(id) {
       // Delete thumbnails
       for (const vid of vids) {
         const tp = path.join(THUMB_DIR, `v_${vid.id}.jpg`);
-        try { await fs.promises.unlink(tp); } catch {}
+        try { await fs.promises.unlink(tp); } catch { /* file may not exist */ }
       }
       // Delete DB rows in batches
       for (let i = 0; i < ids.length; i += 500) {
@@ -227,7 +227,7 @@ async function scanDirectory(onProgress = null) {
     startedAt: new Date().toISOString(), finishedAt: null, lastError: null,
     cancelled: false, currentFolder: null,
   };
-  const notify = () => { if (onProgress) try { onProgress({ ...scanProgress }); } catch {} };
+  const notify = () => { if (onProgress) try { onProgress({ ...scanProgress }); } catch { /* callback error */ } };
 
   try {
     const sourcePaths = await getSourcePaths();
@@ -439,7 +439,7 @@ async function syncDatabase() {
         // Also remove thumbnails
         for (const id of batch) {
           const tp = path.join(THUMB_DIR, `v_${id}.jpg`);
-          try { await fs.promises.unlink(tp); } catch {}
+          try { await fs.promises.unlink(tp); } catch { /* file may not exist */ }
         }
       }
       syncProgress.removed = toRemove.length;

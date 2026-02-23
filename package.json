@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "lint": "eslint . --ignore-pattern node_modules --ignore-pattern data",
     "scan": "node cli.js scan",
     "clear": "node cli.js clear",
     "install-app": "bash install.sh"
@@ -24,5 +25,8 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.14.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1"
   }
 }
