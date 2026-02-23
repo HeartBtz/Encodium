@@ -173,16 +173,32 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   if (!isMkv) tail.push('-movflags', '+faststart');
   tail.push('-f', container, outFile);
 
-  // Common head for all commands
-  const commonHead = ['-hide_banner', '-nostdin', '-y', '-probesize', '50M', '-analyzeduration', '50M'];
+  // Common head for all commands (20M probe is plenty — default is 5M)
+  const commonHead = ['-hide_banner', '-nostdin', '-y', '-probesize', '20M', '-analyzeduration', '20M'];
 
   const swArgs = [...commonHead, '-i', inFile, '-progress', 'pipe:1', ...tail];
 
   let hwArgs = null;
   if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
-    hwArgs = [...commonHead,
-      '-hwaccel', 'cuda', '-hwaccel_device', '0',
-      '-i', inFile, '-progress', 'pipe:1', ...tail];
+    const hwHead = [...commonHead, '-hwaccel', 'cuda', '-hwaccel_device', '0'];
+    let hwTail = tail;
+
+    // When no CPU-based video filters are needed, keep decoded frames in GPU
+    // VRAM via -hwaccel_output_format cuda.  Without this flag ffmpeg copies
+    // every decoded frame back to system RAM — with 2 workers on a 8 GB
+    // machine this triggers the OOM killer (SIGKILL).
+    // -pix_fmt is stripped because NVENC auto-detects the pixel format from
+    // CUDA frames; a CPU pixel format would force an unnecessary round-trip.
+    if (vfFilters.length === 0) {
+      hwHead.push('-hwaccel_output_format', 'cuda');
+      const pixIdx = tail.indexOf('-pix_fmt');
+      if (pixIdx !== -1) {
+        hwTail = [...tail];
+        hwTail.splice(pixIdx, 2); // remove '-pix_fmt' and its value
+      }
+    }
+
+    hwArgs = [...hwHead, '-i', inFile, '-progress', 'pipe:1', ...hwTail];
   }
 
   return { swArgs, hwArgs, container, pixFmt, isHdr, actualOutFile: outFile };
