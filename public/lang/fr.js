@@ -95,6 +95,7 @@ i18n.registerLang('fr', {
   'lib.sel_all': '☑ Tout sélect.',
   'lib.deselect': '✗ Décocher',
   'lib.no_video': 'Aucune vidéo trouvée',
+  'lib.play': 'Lire',
   'toast.no_matching': 'Aucune vidéo correspondante',
   'toast.n_selected': '{n} vidéo(s) sélectionnée(s)',
 
@@ -121,6 +122,9 @@ i18n.registerLang('fr', {
   'queue.errors': 'Erreurs',
   'queue.active_workers': 'Workers actifs : {active}/{total}',
   'queue.no_jobs': 'Aucun job d\'encodage',
+  'queue.priority_up': 'Priorité +',
+  'queue.priority_down': 'Priorité −',
+  'queue.view_log': 'Voir le log',
 
   // ── Job log ──
   'toast.log_unavailable': 'Log non disponible',
@@ -128,6 +132,7 @@ i18n.registerLang('fr', {
   'log.modal_title': 'Log — Job #{id}',
 
   // ── SSE updates ──
+  'toast.proxy_expired': '⚠️ Session proxy expirée — rechargement automatique…',
   'toast.job_skipped': 'Job #{id} : {reason}',
   'toast.encoding_done': 'Encodage terminé : job #{id}',
   'toast.encoding_error': 'Erreur encodage : job #{id} – {error}',

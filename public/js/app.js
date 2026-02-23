@@ -153,7 +153,7 @@
     _proxyReloadPending = true;
     _logNet({ time: _ts(), method: 'PROXY', path, status: 'AUTH_EXPIRED', duration: ms, error: 'Coder session expired → reloading' });
     console.error(`[NET #${reqId}] ✖ Proxy auth expired (CORS redirect detected) — reloading page in 3s…`);
-    toast('⚠️ Session proxy expirée — rechargement automatique…', 'error');
+    toast(t('toast.proxy_expired'), 'error');
     setTimeout(() => { window.location.reload(); }, 3000);
   }
 
@@ -273,6 +273,20 @@
   let _eqGen = 0;            // generation counter — stale API responses are discarded
   let _eqDebounceTimer = null;
 
+  /* ── Library reload guard (prevents flickering & stale overwrites) ──────── */
+  let _libGen = 0;             // generation counter — stale API responses are discarded
+  let _libDebounceTimer = null;
+
+  /** Schedule a debounced library reload. Only loads if on the library tab. */
+  function scheduleLoadLibrary(delayMs = 400) {
+    if (_libDebounceTimer) clearTimeout(_libDebounceTimer);
+    _libDebounceTimer = setTimeout(() => {
+      _libDebounceTimer = null;
+      const activeTab = localStorage.getItem('enc_activeTab') || 'dashboard';
+      if (activeTab === 'library') loadLibrary();
+    }, delayMs);
+  }
+
   function toast(msg, type = 'info') {
     const c = $('#toast-container');
     const el = document.createElement('div');
@@ -384,7 +398,7 @@
       if (sseRetries > 0) {
         const activeTab = localStorage.getItem('enc_activeTab') || 'dashboard';
         if (activeTab === 'dashboard') loadDashboard();
-        else if (activeTab === 'library') loadLibrary();
+        else if (activeTab === 'library') scheduleLoadLibrary(300);
         loadEncodeQueue();
       }
       sseRetries = 0;
@@ -452,10 +466,7 @@
       loadDashboard();
       loadFolders();
       // Only reload library if we're on the library tab to avoid unnecessary calls
-      const activeTab = localStorage.getItem('enc_activeTab') || 'dashboard';
-      if (activeTab === 'library') {
-        loadLibrary();
-      }
+      scheduleLoadLibrary(500);
     }, 1500);
   }
 
@@ -640,6 +651,7 @@
   }
 
   async function loadLibrary() {
+    const gen = ++_libGen;
     try {
       const q = $('#lib-search').value;
       const folder = $('#lib-folder').value;
@@ -658,15 +670,21 @@
       if (fail) params.set('fail', fail);
 
       const data = await api(`/videos?${params}`);
+      if (gen !== _libGen) return; // stale response — discard
       libTotal = data.total || 0;
       renderLibGrid(data.videos);
       renderPagination(data.pages, data.page);
       updateSelectionBar();
-    } catch (e) { toast(t('error.library', {msg: e.message}), 'error'); }
+    } catch (e) {
+      if (gen !== _libGen) return;
+      toast(t('error.library', {msg: e.message}), 'error');
+    }
   }
 
   function renderLibGrid(videos) {
     const grid = $('#lib-grid');
+    const prevScroll = grid.scrollTop;
+    lastClickedCardIdx = -1; // reset shift-click anchor after re-render
     if (!videos.length) {
       grid.innerHTML = `<div class="mb-empty">${t('lib.no_video')}</div>`;
       return;
@@ -681,7 +699,7 @@
             <img data-thumb-id="${v.id}"
                  src="/api/thumb/${v.id}?token=${encodeURIComponent(token)}"
                  loading="lazy">
-            <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="Lire">▶</button>
+            <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="${escHtml(t('lib.play'))}">▶</button>
           </div>
           <span class="mb-card-size">${fmtSize(v.size)}</span>
           ${v.encode_skip ? `<span class="mb-card-skip" title="${escHtml(t('lib.skip_tag'))}">⚠ skip</span>` : ''}
@@ -692,6 +710,9 @@
           </div>
         </div>`;
     }).join('');
+
+    // Restore scroll position to avoid jarring jumps
+    requestAnimationFrame(() => { grid.scrollTop = prevScroll; });
 
     // Thumbnail load/error handler — retry with backoff, then fallback
     $$('img[data-thumb-id]', grid).forEach(img => {
@@ -996,11 +1017,11 @@
             </div>`;
           })() : ''}
           <div class="enc-job-actions">
-            ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="Priority +">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="Priority −">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
+            ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="${escHtml(t('queue.priority_up'))}">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="${escHtml(t('queue.priority_down'))}">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
             ${j.status === 'encoding' ? `<button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})" title="${t('queue.cancel_job')}">✕</button><button class="btn btn-xs btn-ghost" onclick="encAction('force-kill',${j.id})" title="${t('queue.force_kill')}">💀</button>` : ''}
             ${j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
-            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="View log">📋</button>` : ''}
-            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="View log">📋</button>` : ''}
+            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="${escHtml(t('queue.view_log'))}">📋</button>` : ''}
+            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="${escHtml(t('queue.view_log'))}">📋</button>` : ''}
             ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('delete',${j.id})">🗑</button>` : ''}
           </div>
         </div>`;
@@ -1081,8 +1102,8 @@
         toast(t('toast.encoding_done', {id: d.id}), 'success');
       }
       loadDashboard();
-      // Refresh library to show updated codec/size/metadata
-      loadLibrary();
+      // Refresh library to show updated codec/size/metadata (debounced + tab-aware)
+      scheduleLoadLibrary(500);
     } else if (d.status === 'error') {
       toast(t('toast.encoding_error', {id: d.id, error: d.error || ''}), 'error');
     }

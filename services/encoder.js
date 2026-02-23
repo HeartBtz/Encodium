@@ -65,6 +65,8 @@ function clearProgressThrottle(jobId) {
   const entry = _progressThrottleMap.get(jobId);
   if (entry) {
     if (entry.timer) clearTimeout(entry.timer);
+    // Flush any buffered progress before clearing (avoids stuck % on frontend)
+    if (entry.lastData) broadcast('job_progress', entry.lastData);
     _progressThrottleMap.delete(jobId);
   }
 }
@@ -936,13 +938,84 @@ async function enqueue(video_id, presetId, replaceOriginal = false, opts = {}) {
 
 async function enqueueBatch(videoIds, presetId, replaceOriginal = false, opts = {}) {
   const results = { jobs: [], skipped: [] };
+
+  // Resolve preset once for the whole batch (avoid N redundant detectAll calls)
+  const caps = await gpuDetect.detectAll();
+  const preset = caps.presets.find(p => p.id === presetId);
+  if (!preset) throw new Error(`Unknown preset: ${presetId}`);
+  const presetToStore = opts.customCq != null ? { ...preset, cq: opts.customCq } : preset;
+
+  const container = (typeof opts === 'object') ? (opts.container || 'auto') : 'auto';
+  const downscale = (typeof opts === 'object') ? (opts.downscale || '') : '';
+  const tonemap   = (typeof opts === 'object') ? (!!opts.tonemap) : false;
+  const force     = (typeof opts === 'object') ? (!!opts.force) : false;
+
+  const pool = db.getPool();
+
+  // Batch-fetch all video metadata in one query instead of N individual SELECTs
+  const ph = videoIds.map(() => '?').join(',');
+  const [videos] = await pool.query(
+    `SELECT id, size, codec, encode_skip FROM videos WHERE id IN (${ph})`, videoIds
+  );
+  const videoMap = new Map(videos.map(v => [v.id, v]));
+
+  const toInsert = []; // { video_id, fileSize }
+  const targetCodec = preset.codec;
+
   for (const vid of videoIds) {
-    const r = await enqueue(vid, presetId, replaceOriginal, opts);
-    if (r && typeof r === 'object' && r.skipped) {
-      results.skipped.push(r);
-    } else {
-      results.jobs.push(r);
+    const video = videoMap.get(vid);
+    if (!video) { results.skipped.push({ skipped: true, video_id: vid, reason: 'not found' }); continue; }
+
+    // Smart skip: already in target codec
+    const currentCodec = (video.codec || '').toLowerCase();
+    const codecMatch = (
+      (targetCodec === 'h265' && (currentCodec === 'hevc' || currentCodec === 'h265')) ||
+      (targetCodec === 'av1'  && currentCodec === 'av1')
+    );
+    if (codecMatch) {
+      results.skipped.push({ skipped: true, video_id: vid, reason: `already ${currentCodec}` });
+      continue;
     }
+
+    // Skip flagged videos (unless force)
+    if (video.encode_skip && !force) {
+      results.skipped.push({ skipped: true, video_id: vid, reason: 'encode_skip' });
+      continue;
+    }
+    if (video.encode_skip && force) {
+      await pool.query('UPDATE videos SET encode_skip = 0 WHERE id = ?', [vid]);
+    }
+
+    toInsert.push({ video_id: vid, fileSize: video.size || 0 });
+  }
+
+  // Bulk INSERT all qualifying jobs in a single query
+  if (toInsert.length > 0) {
+    const encodeOpts = JSON.stringify({ container, downscale, tonemap });
+    const presetJson = JSON.stringify(presetToStore);
+    const values = toInsert.map(j =>
+      [j.video_id, presetId, presetJson, replaceOriginal ? 1 : 0, encodeOpts, 'pending', j.fileSize]
+    );
+    const valPh = values.map(() => '(?,?,?,?,?,?,?)').join(',');
+    const flat = values.flat();
+    const [insertResult] = await pool.query(
+      `INSERT INTO encode_jobs (video_id, preset_id, preset_json, replace_original, encode_options, status, file_size_before) VALUES ${valPh}`,
+      flat
+    );
+
+    // Broadcast each new job for SSE
+    const firstId = insertResult.insertId;
+    for (let i = 0; i < toInsert.length; i++) {
+      const jobId = firstId + i;
+      results.jobs.push(jobId);
+      broadcast('job_update', { id: jobId, status: 'pending', video_id: toInsert[i].video_id, preset: presetToStore.label });
+    }
+    logger.info('encoder', `Batch enqueued ${toInsert.length} job(s) for preset ${preset.label}`);
+    setImmediate(processQueue);
+  }
+
+  if (results.skipped.length > 0) {
+    logger.info('encoder', `Batch skipped ${results.skipped.length} video(s)`);
   }
   return results;
 }
@@ -1052,10 +1125,10 @@ async function deleteJob(jobId) {
 
 async function clearFinished() {
   const pool = db.getPool();
-  // Delete finished/errored/cancelled jobs (not pending or encoding)
-  const [result] = await pool.query("DELETE FROM encode_jobs WHERE status IN ('done','error','failed','cancelled')");
+  // Delete done + cancelled jobs — keep 'error' jobs so the fail tag persists
+  const [result] = await pool.query("DELETE FROM encode_jobs WHERE status IN ('done','cancelled')");
   if (result.affectedRows > 0) {
-    logger.info('encoder', `Cleared ${result.affectedRows} finished job(s) from queue`);
+    logger.info('encoder', `Cleared ${result.affectedRows} finished job(s) from queue (errors preserved)`);
     broadcast('job_update', { cleared: true });
   }
   return result.affectedRows;

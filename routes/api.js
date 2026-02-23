@@ -102,12 +102,19 @@ router.post('/auth/login', loginLimiter, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     const user = await db.getUserByEmail(email);
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!user) {
+      logger.warn('auth', `Login failed: unknown email "${email}"`);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!ok) {
+      logger.warn('auth', `Login failed: wrong password for "${email}"`);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
     await db.updateLastLogin(user.id);
+    logger.info('auth', `Login success: ${email} (id=${user.id})`);
     res.json({ token: signToken(user), user: { id: user.id, email: user.email, role: user.role } });
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+  } catch (e) { logger.error('auth', `Login error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }
 });
 
 router.get('/auth/me', requireAuth, async (req, res) => {
@@ -677,8 +684,9 @@ router.post('/settings/schedule', requireAuth, async (req, res) => {
     if (enabled !== undefined) await db.setSetting('schedule_enabled', enabled ? '1' : '0');
     if (start !== undefined) await db.setSetting('schedule_start', String(Math.max(0, Math.min(23, parseInt(start, 10)))));
     if (end !== undefined)   await db.setSetting('schedule_end', String(Math.max(1, Math.min(24, parseInt(end, 10)))));
+    logger.info('settings', `Schedule updated by ${req.user.email}: enabled=${enabled}, start=${start}, end=${end}`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+  } catch (e) { logger.error('settings', `Schedule save error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -714,8 +722,9 @@ router.post('/settings/notifications', requireAdmin, async (req, res) => {
       }
       await db.setSetting('webhook_url', trimmed);
     }
+    logger.info('settings', `Webhook updated by ${req.user.email}: enabled=${enabled}, url=${url ? '(set)' : '(unchanged)'}`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+  } catch (e) { logger.error('settings', `Webhook save error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -735,8 +744,9 @@ router.post('/settings/autoscan', requireAdmin, async (req, res) => {
     const watcher = require('../services/watcher');
     const { interval } = req.body;
     await watcher.setAutoScanInterval(interval);
+    logger.info('settings', `Auto-scan interval updated by ${req.user.email}: ${interval}`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+  } catch (e) { logger.error('settings', `Auto-scan save error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -772,6 +782,7 @@ router.post('/settings/sources', requireAdmin, async (req, res) => {
       throw addErr;
     }
     res.json(source);
+    logger.info('settings', `Source added by ${req.user.email}: ${resolved}`);
     // Auto-scan the new source in background (scan + enrich)
     const watcher = require('../services/watcher');
     watcher.refreshWatchers().catch(() => {});
@@ -785,6 +796,7 @@ router.delete('/settings/sources/:id', requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     await scanner.removeSource(id);
+    logger.info('settings', `Source removed by ${req.user.email}: id=${id}`);
     // Refresh watchers (stop watching removed source)
     const watcher = require('../services/watcher');
     watcher.refreshWatchers().catch(() => {});
@@ -844,8 +856,9 @@ router.get('/browse', requireAdmin, async (req, res) => {
 router.post('/clear', requireAdmin, async (req, res) => {
   try {
     await db.clearAll();
+    logger.warn('api', `Database cleared by ${req.user.email}`);
     res.json({ message: 'Database cleared' });
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+  } catch (e) { logger.error('api', `Clear DB error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }
 });
 
 module.exports = router;

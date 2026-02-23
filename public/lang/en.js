@@ -95,6 +95,7 @@ i18n.registerLang('en', {
   'lib.sel_all': '☑ Select all',
   'lib.deselect': '✗ Deselect',
   'lib.no_video': 'No videos found',
+  'lib.play': 'Play',
   'toast.no_matching': 'No matching videos',
   'toast.n_selected': '{n} video(s) selected',
 
@@ -121,6 +122,9 @@ i18n.registerLang('en', {
   'queue.errors': 'Errors',
   'queue.active_workers': 'Active workers: {active}/{total}',
   'queue.no_jobs': 'No encoding jobs',
+  'queue.priority_up': 'Priority +',
+  'queue.priority_down': 'Priority −',
+  'queue.view_log': 'View log',
 
   // ── Job log ──
   'toast.log_unavailable': 'Log not available',
@@ -128,6 +132,7 @@ i18n.registerLang('en', {
   'log.modal_title': 'Log — Job #{id}',
 
   // ── SSE updates ──
+  'toast.proxy_expired': '⚠️ Proxy session expired — automatic reload…',
   'toast.job_skipped': 'Job #{id}: {reason}',
   'toast.encoding_done': 'Encoding done: job #{id}',
   'toast.encoding_error': 'Encoding error: job #{id} – {error}',
