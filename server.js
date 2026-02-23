@@ -75,11 +75,20 @@ async function boot() {
   // Start file watcher & auto-sync service
   await watcher.start();
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`\n  ╔══════════════════════════════════════╗`);
     console.log(`  ║   Encodium v${version.padEnd(24)}║`);
     console.log(`  ║   http://localhost:${PORT}              ║`);
     console.log(`  ╚══════════════════════════════════════╝\n`);
+  });
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[server] Port ${PORT} already in use — is another Encodium instance running (PM2 / systemd)?`);
+      console.error('[server] Fix: stop the other instance first, e.g.  pm2 delete encodium  or  systemctl stop encodium');
+    } else {
+      console.error(`[server] Listen error: ${err.message}`);
+    }
+    process.exit(1);
   });
 
   /* ── Graceful shutdown ─────────────────────────────────── */
