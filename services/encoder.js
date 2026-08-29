@@ -155,7 +155,14 @@ function devKeyFor(preset) {
 function gpuIndexFor(preset) {
   if (preset.type === 'nvidia') return preset.gpuIndex ?? 0;
   if (preset.type === 'nvidia_group') return pickNvidiaGpu(preset);
-  return 0;
+  return undefined;
+}
+
+function vaapiDeviceFor(preset, devKey) {
+  if (preset.type !== 'vaapi' && preset.type !== 'vaapi_group') return undefined;
+  const prefix = 'vaapi_';
+  if (devKey && devKey.startsWith(prefix)) return devKey.slice(prefix.length);
+  return preset.renderDevice || pickVaapiDevice(preset);
 }
 
 /* ─── Safe cross-filesystem move ─────────────────────────────── */
@@ -464,6 +471,7 @@ async function processJob(job) {
     const probeInfo = {
       inputCodec, colorMeta, bitDepth, isHdr,
       caps: encCaps, badSubIndices, inputDuration,
+      vaapiDevice: vaapiDeviceFor(preset, devKey),
     };
     const { swArgs, hwArgs, actualOutFile } = ffmpegArgs.buildArgs(preset, inFile, tmpFile, probeInfo, encodeOpts);
 
@@ -862,7 +870,7 @@ async function processQueue() {
         preLockedDevKey = devKeyFor(preset);
         // Extract gpu index from devKey to avoid a second pickNvidiaGpu call
         const nvidiaMatch = preLockedDevKey.match(/^nvidia_(\d+)$/);
-        preLockedGpuIdx = nvidiaMatch ? parseInt(nvidiaMatch[1], 10) : 0;
+        preLockedGpuIdx = nvidiaMatch ? parseInt(nvidiaMatch[1], 10) : undefined;
         lockDevice(preLockedDevKey);
         job._preLockedDevKey = preLockedDevKey;
         job._preLockedGpuIdx = preLockedGpuIdx;

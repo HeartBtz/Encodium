@@ -47,9 +47,14 @@ function mimeForExt(ext) {
  * @returns {{ swArgs: string[], hwArgs: string[]|null, container: string, pixFmt: string, isHdr: boolean, actualOutFile: string }}
  */
 function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
-  const { colorMeta, bitDepth, isHdr, caps: encCaps, badSubIndices } = probeInfo;
+  const {
+    colorMeta, bitDepth, isHdr, caps: encCaps, badSubIndices,
+    vaapiDevice,
+  } = probeInfo;
 
   const isAv1 = preset.codec === 'av1';
+  const isNvidia = preset.type === 'nvidia' || preset.type === 'nvidia_group';
+  const isVaapi = preset.type === 'vaapi' || preset.type === 'vaapi_group';
 
   // Container selection
   const { isMkv, format: container } = resolveContainer(encodeOpts.container || 'auto', isAv1);
@@ -85,6 +90,14 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
     vfFilters.push(`scale=-2:${downscale}`);
   }
 
+  // VA-API encoders accept hardware surfaces, not regular CPU frames. Keep
+  // tonemapping/downscaling on the CPU, then convert to a supported surface
+  // format and upload it to the VA display selected by the scheduler.
+  if (isVaapi) {
+    const surfaceFormat = pixFmt === 'p010le' ? 'p010le' : 'nv12';
+    vfFilters.push(`format=${surfaceFormat}`, 'hwupload');
+  }
+
   // Map streams — MKV only supports video/audio/subtitles
   if (isMkv) {
     tail.push('-map', '0:v', '-map', '0:a?', '-map', '0:s?');
@@ -105,24 +118,26 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
 
   // Preset (NVENC p1-p7)
   const nvencPreset = preset.nvencPreset || 'p6';
-  if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
+  if (isNvidia) {
     tail.push('-preset', nvencPreset);
   }
   // VA-API doesn't use -preset
 
-  // 10-bit profile when needed
-  if (pixFmt === 'p010le' && encCaps.profile) {
+  // HEVC calls its 10-bit profile "main10". AV1 uses main/high/
+  // professional profiles instead, so its profile must be inferred from the
+  // P010 input surface rather than receiving an invalid HEVC profile name.
+  if (pixFmt === 'p010le' && preset.codec === 'h265' && encCaps.profile) {
     tail.push('-profile:v', 'main10');
   }
 
   // Tune (only for NVENC)
-  if (encCaps.tune && (preset.type === 'nvidia' || preset.type === 'nvidia_group')) {
+  if (encCaps.tune && isNvidia) {
     tail.push('-tune', preset.nvencTune || 'hq');
   }
 
   // Rate control
   const cq = preset.cq || (isAv1 ? 30 : 23);
-  if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
+  if (isNvidia) {
     if (isAv1) {
       if (encCaps.rc && encCaps.qp) {
         tail.push('-rc', 'constqp', '-qp', String(cq));
@@ -136,7 +151,7 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
         tail.push('-rc', 'constqp', '-qp', String(cq));
       }
     }
-  } else if (preset.type === 'vaapi' || preset.type === 'vaapi_group') {
+  } else if (isVaapi) {
     tail.push('-rc_mode', 'CQP', '-global_quality', String(cq));
   } else if (preset.type === 'qsv') {
     tail.push('-global_quality', String(cq), '-preset', 'medium');
@@ -146,8 +161,10 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
     else if (preset.encoder === 'libaom-av1') tail.push('-crf', String(cq), '-cpu-used', '4');
   }
 
-  // Pixel format
-  tail.push('-pix_fmt', pixFmt);
+  // For VA-API the filter graph outputs hardware frames whose pixel format is
+  // "vaapi". Passing a CPU format here makes ffmpeg insert an impossible
+  // auto_scale conversion between CPU and hardware frames.
+  if (!isVaapi) tail.push('-pix_fmt', pixFmt);
 
   // Preserve color signaling (skip if tonemapping)
   if (!doTonemap) {
@@ -176,10 +193,13 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   // Common head for all commands (20M probe is plenty — default is 5M)
   const commonHead = ['-hide_banner', '-nostdin', '-y', '-probesize', '20M', '-analyzeduration', '20M'];
 
-  const swArgs = [...commonHead, '-i', inFile, '-progress', 'pipe:1', ...tail];
+  const inputHead = isVaapi
+    ? [...commonHead, '-vaapi_device', vaapiDevice || preset.renderDevice || '/dev/dri/renderD128']
+    : commonHead;
+  const swArgs = [...inputHead, '-i', inFile, '-progress', 'pipe:1', ...tail];
 
   let hwArgs = null;
-  if (preset.type === 'nvidia' || preset.type === 'nvidia_group') {
+  if (isNvidia) {
     const hwHead = [...commonHead, '-hwaccel', 'cuda', '-hwaccel_device', '0'];
     let hwTail = tail;
 
