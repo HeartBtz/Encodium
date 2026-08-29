@@ -89,6 +89,7 @@ let _processing = false;
 let _processingTs = 0;          // timestamp when _processing was set
 const PROCESSING_TIMEOUT = 30000; // 30s safety valve
 let _watchdogTimer = null;
+let _stateBroadcastTimer = null;
 const MAX_SIGNAL_RETRIES = 3;     // max SIGKILL recovery attempts before marking error
 const RETRY_BACKOFF_BASE = 10000; // 10s base backoff (×2 per retry)
 const _retryCooldown = new Set();  // job IDs in backoff — skipped by processQueue
@@ -167,12 +168,42 @@ function vaapiDeviceFor(preset, devKey) {
 
 /* ─── Safe cross-filesystem move ─────────────────────────────── */
 
-async function moveFile(src, dst) {
-  try { await fsp.rename(src, dst); }
-  catch (e) {
+async function copyFileStream(src, dst) {
+  // Stream-based copy — works on all filesystem types (NFS, ZFS, overlayfs, etc.)
+  // Unlike fs.copyFile which uses copy_file_range and fails with EPERM on some mounts.
+  const { createReadStream, createWriteStream } = require('fs');
+  const srcStat = await fsp.stat(src);
+  await new Promise((resolve, reject) => {
+    const rd = createReadStream(src);
+    const wr = createWriteStream(dst);
+    rd.on('error', err => { wr.destroy(); reject(err); });
+    wr.on('error', reject);
+    wr.on('finish', resolve);
+    rd.pipe(wr);
+  });
+  // Integrity check: destination must exist and match source size exactly
+  let dstStat;
+  try { dstStat = await fsp.stat(dst); } catch (statErr) {
+    throw new Error(`Copy integrity check: destination not found after copy (${statErr.code}): ${dst}`);
+  }
+  if (dstStat.size !== srcStat.size) {
+    await fsp.unlink(dst).catch(() => {});
+    throw new Error(`Copy integrity check failed: src=${srcStat.size} bytes, dst=${dstStat.size} bytes — partial file removed`);
+  }
+}
+
+async function moveFile(src, dst, jobLog) {
+  const srcStat = await fsp.stat(src);
+  jobLog?.info(`moveFile: ${path.basename(src)} (${(srcStat.size / 1e6).toFixed(1)} MB) → ${dst}`);
+  try {
+    await fsp.rename(src, dst);
+    jobLog?.info(`moveFile: rename succeeded`);
+  } catch (e) {
     if (e.code !== 'EXDEV') throw e;
-    await fsp.copyFile(src, dst);
+    jobLog?.info(`moveFile: cross-device (EXDEV), using stream copy`);
+    await copyFileStream(src, dst);
     await fsp.unlink(src);
+    jobLog?.info(`moveFile: stream copy + source cleanup done`);
   }
 }
 
@@ -182,17 +213,25 @@ async function createJobLogger(jobId) {
   await fsp.mkdir(LOG_DIR, { recursive: true });
   const logPath = path.join(LOG_DIR, `job_${jobId}.log`);
   const stream = fs.createWriteStream(logPath, { flags: 'a' });
+  // Prevent unhandled 'error' events from crashing the whole encoder service.
+  // Disk full / quota / permission issues on the log path must NOT take down
+  // active encodes — log to console as a last resort and keep going.
+  stream.on('error', (e) => {
+    try { console.error(`[encoder] job log write error (job #${jobId}): ${e.code || ''} ${e.message}`); } catch {}
+  });
 
   function write(level, msg) {
     const ts = new Date().toISOString();
-    stream.write(`[${ts}] [${level}] ${msg}\n`);
+    if (stream.writable) {
+      try { stream.write(`[${ts}] [${level}] ${msg}\n`); } catch {}
+    }
   }
 
   return {
     info: (msg) => write('INFO', msg),
     warn: (msg) => write('WARN', msg),
     error: (msg) => write('ERROR', msg),
-    writeRaw: (data) => stream.write(data),
+    writeRaw: (data) => { if (stream.writable) { try { stream.write(data); } catch {} } },
     close: () => new Promise(resolve => stream.end(resolve)),
     path: logPath,
   };
@@ -333,10 +372,26 @@ async function processJob(job) {
   const pool = db.getPool();
   const jobLog = await createJobLogger(job.id);
 
-  // Parse preset early so we can unlock device in finally
+  // Parse preset early so we can unlock device in finally.
+  // Defensive: JSON.parse("null") returns null (not exception), and an old
+  // job may have stored an incomplete preset. We MUST validate the result
+  // is a real object with .encoder before going further — otherwise the
+  // first `preset.encoder` access in buildArgs crashes the worker thread
+  // and leaves the job stuck in 'encoding' forever.
   let preset;
   try { preset = JSON.parse(job.preset_json); }
-  catch { preset = { encoder: 'libx265', codec: 'h265', type: 'cpu', id: 'cpu_h265' }; }
+  catch { preset = null; }
+  if (!preset || typeof preset !== 'object' || !preset.encoder || !preset.codec) {
+    const err = `Invalid/missing preset for job #${job.id} (preset_json=${String(job.preset_json).slice(0, 120)}). Marking as error.`;
+    jobLog.error(err);
+    try {
+      await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?", ['Invalid preset configuration', job.id]);
+      broadcast('job_update', { id: job.id, status: 'error', error: 'Invalid preset configuration' });
+    } catch (dbErr) {
+      jobLog.error(`Failed to mark job as error: ${dbErr.message}`);
+    }
+    return;
+  }
 
   // Parse encode options (container, downscale, tonemap)
   let encodeOpts = {};
@@ -397,6 +452,15 @@ async function processJob(job) {
     jobLog.info(`Input codec: ${inputCodec}`);
     jobLog.info(`Color: transfer=${colorMeta.transfer} primaries=${colorMeta.primaries} space=${colorMeta.space} range=${colorMeta.range}`);
     jobLog.info(`Bit depth: ${bitDepth}, Duration: ${inputDuration}s`);
+
+    // Ensure video.duration is set from the live ffprobe value: the DB may
+    // hold NULL for un-enriched videos. Without this, the progress
+    // calculation block (`if (... && video.duration)`) would never run and
+    // no `job_progress` SSE events would reach the frontend → progress bar
+    // appears stuck at 0%.
+    if (inputDuration && inputDuration > 0) {
+      video.duration = inputDuration;
+    }
     if (badSubIndices.length) jobLog.warn(`Bad subtitle streams to drop: ${badSubIndices.join(', ')}`);
 
     if (fullInfo) {
@@ -462,15 +526,40 @@ async function processJob(job) {
     job._deviceLocked = true;
 
     await pool.query(
-      "UPDATE encode_jobs SET status='encoding', started_at=NOW(), file_size_before=? WHERE id=?",
+      // Status is already 'encoding' (set atomically by processQueue's claim).
+      // Only update fields not yet populated to avoid a redundant status write.
+      "UPDATE encode_jobs SET started_at=NOW(), file_size_before=? WHERE id=?",
       [video.size || 0, job.id]
     );
-    broadcast('job_update', { id: job.id, status: 'encoding', video_id: job.video_id });
+    // Note: no need to broadcast 'encoding' again — processQueue already did.
 
     // ── Build ffmpeg arguments ──
     const probeInfo = {
       inputCodec, colorMeta, bitDepth, isHdr,
       caps: encCaps, badSubIndices, inputDuration,
+      // Only secondary video streams that are safe to copy (attached pics with valid
+      // dimensions and a known pixel format). Streams with pix_fmt='none' or missing
+      // width/height crash the muxer with "dimensions not set" (code 234).
+      validSecondaryVideoIndices: fullInfo ? (fullInfo.streams || [])
+        .filter(s =>
+          s.codec_type === 'video' &&
+          s.index > 0 &&                          // skip primary stream
+          s.width && s.height &&                  // must have dimensions
+          s.pix_fmt && s.pix_fmt !== 'none'       // must have a known pixel format
+        )
+        .map(s => s.index) : [],
+      // Secondary video streams that are broken (unknown dimensions/pix_fmt) — must be
+      // explicitly excluded via negative -map to prevent "dimensions not set" crashes.
+      badVideoIndices: fullInfo ? (fullInfo.streams || [])
+        .filter(s =>
+          s.codec_type === 'video' &&
+          s.index > 0 &&
+          (!s.width || !s.height || !s.pix_fmt || s.pix_fmt === 'none')
+        )
+        .map(s => s.index) : [],
+      subtitleStreams: fullInfo ? (fullInfo.streams || [])
+        .filter(s => s.codec_type === 'subtitle')
+        .map(s => ({ idx: s.index, codec: (s.codec_name || '').toLowerCase() })) : [],
       vaapiDevice: vaapiDeviceFor(preset, devKey),
     };
     const { swArgs, hwArgs, actualOutFile } = ffmpegArgs.buildArgs(preset, inFile, tmpFile, probeInfo, encodeOpts);
@@ -534,14 +623,57 @@ async function processJob(job) {
       const errorLines = allStderr.split('\n').filter(l =>
         /error|cannot|invalid|failed|not found|no such|denied|killed|abort|segfault|signal/i.test(l)
       ).slice(0, 20).join('\n');
-      const errMsg = `ffmpeg exited with code ${result.code}.\n${errorLines || result.stderrTail.slice(-2000)}`;
-      jobLog.error(errMsg);
-      await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
-        [errMsg.slice(0, 5000), job.id]);
-      broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
-      try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
-      logger.error('encoder', `Job #${job.id} failed: ffmpeg exit code ${result.code}`);
-      return;
+
+      // ── 3rd-level fallback: GPU encoder init failed → retry with CPU ──
+      // This catches NVENC driver crashes, VRAM exhaustion, missing capable
+      // device, VA-API init failures, etc. — situations where the GPU
+      // encoder itself can't run but a CPU encoder would succeed.
+      const cpuPreset = deriveCpuPreset(preset);
+      if (cpuPreset && shouldFallbackToCpu(allStderr, preset.type)) {
+        jobLog.warn(`GPU encoder ${preset.encoder} failed to initialize — falling back to CPU encoder ${cpuPreset.encoder}`);
+        logger.warn('encoder', `Job #${job.id}: GPU init failed, retrying with CPU (${cpuPreset.encoder})`);
+        try { await fsp.unlink(tmpFile); } catch { /* cleanup */ }
+        // Rebuild args with CPU preset (no hwArgs this time — pure CPU path)
+        const cpuBuild = ffmpegArgs.buildArgs(cpuPreset, inFile, tmpFile, probeInfo, encodeOpts);
+        if (cpuBuild.actualOutFile !== tmpFile) tmpFile = cpuBuild.actualOutFile;
+        jobLog.info(`CPU retry: ffmpeg ${cpuBuild.swArgs.join(' ')}`);
+        const cpuResult = await runFfmpegWithFallback(job, video, null, cpuBuild.swArgs, tmpFile, undefined, jobLog);
+        if (cpuResult.cancelled) {
+          await pool.query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=?", [job.id]);
+          broadcast('job_update', { id: job.id, status: 'cancelled' });
+          try { await fsp.unlink(tmpFile); } catch { /* cleanup */ }
+          return;
+        }
+        if (cpuResult.code === 0) {
+          jobLog.info('CPU fallback succeeded');
+          // Continue to the post-encode validation flow below by mutating result
+          result.code = 0;
+          result.stderrHead = cpuResult.stderrHead;
+          result.stderrTail = cpuResult.stderrTail;
+        } else {
+          const cpuStderr = cpuResult.stderrHead + '\n' + cpuResult.stderrTail;
+          const cpuErrorLines = cpuStderr.split('\n').filter(l =>
+            /error|cannot|invalid|failed|not found|no such|denied|killed|abort|segfault|signal/i.test(l)
+          ).slice(0, 20).join('\n');
+          const errMsg = `GPU encoder failed AND CPU fallback failed.\n[GPU exit ${result.code}]\n${errorLines}\n[CPU exit ${cpuResult.code}]\n${cpuErrorLines || cpuStderr.slice(-2000)}`;
+          jobLog.error(errMsg);
+          await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
+            [errMsg.slice(0, 5000), job.id]);
+          broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
+          try { await fsp.unlink(tmpFile); } catch { /* cleanup */ }
+          logger.error('encoder', `Job #${job.id} failed: GPU+CPU both errored`);
+          return;
+        }
+      } else {
+        const errMsg = `ffmpeg exited with code ${result.code}.\n${errorLines || result.stderrTail.slice(-2000)}`;
+        jobLog.error(errMsg);
+        await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
+          [errMsg.slice(0, 5000), job.id]);
+        broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
+        try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ }
+        logger.error('encoder', `Job #${job.id} failed: ffmpeg exit code ${result.code}`);
+        return;
+      }
     }
 
     // ── Quick existence check right after ffmpeg exit ──
@@ -592,43 +724,93 @@ async function processJob(job) {
     }
 
     if (replaceOriginal) {
+      const targetPath = path.join(path.dirname(inFile), `${baseName}${ext}`);
+      jobLog.info(`--- Replacing original ---`);
+      jobLog.info(`Encoded  : ${tmpFile} (${(newSize / 1e6).toFixed(1)} MB)`);
+      jobLog.info(`Target   : ${targetPath}`);
+      jobLog.info(`Original : ${inFile} (${(video.size / 1e6).toFixed(1)} MB)`);
       try {
-        const targetPath = path.join(path.dirname(inFile), `${baseName}${ext}`);
-        // Move new file first, THEN delete original (ensures no data loss on failure)
-        await moveFile(tmpFile, targetPath);
-        tmpFile = null; // moved successfully — prevent finally from deleting it
+        // Ensure destination directory exists (e.g. new season folder on NFS)
+        await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+        // Move encoded file to destination FIRST — original untouched until we confirm success
+        await moveFile(tmpFile, targetPath, jobLog);
+        tmpFile = null; // file is now at targetPath — prevent finally from deleting it
         finalPath = targetPath;
-        // Only delete the original after the new file is safely in place
+        // Verify destination is intact before touching DB or original
+        const dstStat = await fsp.stat(targetPath);
+        jobLog.info(`Destination verified: ${(dstStat.size / 1e6).toFixed(1)} MB at ${targetPath}`);
+        // Update DB BEFORE deleting original — prevents orphan entry if unlink fails
+        await refreshVideoMeta(job.video_id, targetPath, jobLog);
+        // Only delete the original AFTER DB is updated and destination is confirmed
         if (targetPath !== inFile) {
-          try { await fsp.unlink(inFile); } catch (unlinkErr) {
-            jobLog.warn(`Could not remove original (${unlinkErr.message}), new file is safe at ${targetPath}`);
+          try {
+            await fsp.unlink(inFile);
+            jobLog.info(`Original deleted: ${inFile}`);
+          } catch (unlinkErr) {
+            jobLog.warn(`Could not delete original (${unlinkErr.message}) — new file is safe at ${targetPath}`);
           }
         }
-        // Re-probe output and update ALL video metadata (codec, size, duration, resolution, etc.)
-        await refreshVideoMeta(job.video_id, targetPath, jobLog);
         jobLog.info(`Replaced original → ${targetPath}`);
       } catch (e) {
-        jobLog.error(`Replace-original failed: ${e.message}`);
-        finalPath = tmpFile;
-        tmpFile = null; // keep the file at tmpFile as final output — don't let finally delete it
+        if (tmpFile !== null) {
+          // moveFile threw — encoded file is still in ENCODE_DIR
+          const errMsg = `Replace-original FAILED (${e.message}) — encoded file stranded at: ${tmpFile}`;
+          jobLog.error(errMsg);
+          logger.error('encoder', `Job #${job.id}: ${errMsg}`);
+          await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
+            [errMsg.slice(0, 5000), job.id]);
+          broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
+          tmpFile = null; // keep file in ENCODE_DIR — prevent finally from deleting it
+        } else {
+          // moveFile succeeded but post-move verification failed — file should be at targetPath
+          const errMsg = `Post-move verification FAILED (${e.message}) — file may be at: ${targetPath}`;
+          jobLog.error(errMsg);
+          logger.error('encoder', `Job #${job.id}: ${errMsg}`);
+          await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
+            [errMsg.slice(0, 5000), job.id]);
+          broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
+        }
+        return;
       }
     } else {
+      jobLog.info(`--- Moving to output directory ---`);
+      jobLog.info(`Encoded  : ${tmpFile} (${(newSize / 1e6).toFixed(1)} MB)`);
+      jobLog.info(`Output   : ${outFile}`);
       try {
-        await moveFile(tmpFile, outFile);
-        tmpFile = null; // moved successfully — prevent finally from deleting it
-        // Delete the original file since encode succeeded — avoids duplicates on next sync
+        await moveFile(tmpFile, outFile, jobLog);
+        tmpFile = null; // file is now at outFile — prevent finally from deleting it
+        finalPath = outFile;
+        // Update DB BEFORE deleting original — prevents orphan entry if refreshVideoMeta fails
+        await refreshVideoMeta(job.video_id, outFile, jobLog);
+        // Only delete the original AFTER DB is updated
         if (inFile !== outFile) {
-          try { await fsp.unlink(inFile); jobLog.info(`Deleted original → ${inFile}`); } catch (unlinkErr) {
-            if (unlinkErr.code !== 'ENOENT') jobLog.warn(`Could not remove original (${unlinkErr.message})`);
+          try {
+            await fsp.unlink(inFile);
+            jobLog.info(`Original deleted: ${inFile}`);
+          } catch (unlinkErr) {
+            if (unlinkErr.code !== 'ENOENT') jobLog.warn(`Could not delete original (${unlinkErr.message})`);
           }
         }
-        // Update video metadata to reflect the new encoded file
-        await refreshVideoMeta(job.video_id, outFile, jobLog);
         jobLog.info(`Output → ${outFile}`);
       } catch (e) {
-        jobLog.error(`Move failed: ${e.message}`);
-        finalPath = tmpFile;
-        tmpFile = null; // keep the file at tmpFile as final output — don't let finally delete it
+        if (tmpFile !== null) {
+          // moveFile threw — encoded file is still in ENCODE_DIR as tmpFile
+          const errMsg = `Move FAILED (${e.message}) — encoded file stranded at: ${tmpFile}`;
+          jobLog.error(errMsg);
+          logger.error('encoder', `Job #${job.id}: ${errMsg}`);
+          await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
+            [errMsg.slice(0, 5000), job.id]);
+          broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
+          tmpFile = null; // keep file in ENCODE_DIR — prevent finally from deleting it
+        } else {
+          const errMsg = `Post-move error (${e.message})`;
+          jobLog.error(errMsg);
+          logger.error('encoder', `Job #${job.id}: ${errMsg}`);
+          await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=?",
+            [errMsg.slice(0, 5000), job.id]);
+          broadcast('job_update', { id: job.id, status: 'error', error: errMsg.slice(0, 500) });
+        }
+        return;
       }
     }
 
@@ -795,7 +977,76 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
   });
 }
 
-/* ─── Schedule check ─────────────────────────────────────────── */
+/* ─── Hardware → CPU encoder fallback helpers ────────────────── */
+
+// Map a hardware encoder name to its CPU equivalent. Used as a last-resort
+// fallback when the GPU encoder fails to initialize (e.g. driver crash,
+// VRAM exhaustion, unsupported codec parameters specific to NVENC/QSV/VAAPI).
+const HW_TO_CPU_ENCODER = {
+  // NVIDIA NVENC
+  av1_nvenc: 'libsvtav1',
+  hevc_nvenc: 'libx265',
+  h264_nvenc: 'libx264',
+  // Intel QSV
+  av1_qsv: 'libsvtav1',
+  hevc_qsv: 'libx265',
+  h264_qsv: 'libx264',
+  // VA-API (AMD/Intel)
+  av1_vaapi: 'libsvtav1',
+  hevc_vaapi: 'libx265',
+  h264_vaapi: 'libx264',
+  // AMD AMF
+  av1_amf: 'libsvtav1',
+  hevc_amf: 'libx265',
+  h264_amf: 'libx264',
+};
+
+// Pattern matching for "the GPU encoder itself failed to initialize" — these
+// are the cases where retrying the same encoder is pointless and we should
+// fall back to a CPU encoder instead. Excludes input/codec-parameter errors
+// that would also fail in CPU.
+const GPU_INIT_ERROR_PATTERNS = [
+  /OpenEncodeSessionEx failed/i,
+  /InitializeEncoder failed/i,
+  /No NVENC capable devices found/i,
+  /Cannot load (libnvcuvid|nvcuda)/i,
+  /Driver does not support the required nvenc API/i,
+  /CreateDevice failed/i,
+  /Failed setup for format cuda/i,
+  /Failed loading nvcuvid/i,
+  /No capable devices found/i,
+  /Function not implemented.*nvenc/i,
+  /vaapi.*Failed to initialise/i,
+  /Failed to open VA display/i,
+  /qsv.*not found/i,
+  /Error initializing.*qsv/i,
+  /Generic error in an external library/i, // common NVENC catch-all
+];
+
+function shouldFallbackToCpu(stderr, presetType) {
+  if (presetType === 'cpu' || !presetType) return false;
+  return GPU_INIT_ERROR_PATTERNS.some(re => re.test(stderr));
+}
+
+// Derive a CPU-equivalent preset from a hardware preset, preserving codec/cq.
+function deriveCpuPreset(preset) {
+  const cpuEncoder = HW_TO_CPU_ENCODER[preset.encoder];
+  if (!cpuEncoder) return null;
+  return {
+    ...preset,
+    type: 'cpu',
+    encoder: cpuEncoder,
+    // Drop NVENC-specific options that don't apply to CPU encoders
+    nvencPreset: undefined,
+    nvencTune: undefined,
+    gpuIndex: undefined,
+    gpuCount: undefined,
+    deviceCount: undefined,
+    renderDevice: undefined,
+  };
+}
+
+
 
 async function isScheduleAllowed() {
   const enabled = await db.getSetting('schedule_enabled', '0');
@@ -892,7 +1143,14 @@ async function processQueue() {
         .finally(() => setImmediate(processQueue));
     }
   } catch (e) {
-    logger.error('encoder', `Queue error: ${e.message}`);
+    // ETIMEDOUT / ECONNREFUSED at boot = MySQL pool not ready yet.
+    // Don't spam errors; the watchdog will retry in 10 s.
+    const transient = ['ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'PROTOCOL_CONNECTION_LOST'].includes(e.code);
+    if (transient) {
+      logger.warn('encoder', `Queue transient error (will retry): ${e.code} ${e.message}`);
+    } else {
+      logger.error('encoder', `Queue error: ${e.message}`);
+    }
   }
   _processing = false;
   _processingTs = 0;
@@ -1135,25 +1393,30 @@ async function forceKillJob(jobId) {
     logger.warn('encoder', `Job #${jobId} force-killed (SIGKILL)`);
   }
   // Also try to kill by PID pattern (orphan ffmpeg for this job)
+  let orphansKilled = 0;
   try {
     const { execSync } = require('child_process');
     const pids = execSync(`pgrep -f 'ffmpeg.*\\.tmp\\.${jobId}\\.' 2>/dev/null || true`).toString().trim();
     if (pids) {
       for (const pid of pids.split('\n').filter(Boolean)) {
-        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* process already exited */ }
+        try { process.kill(parseInt(pid, 10), 'SIGKILL'); orphansKilled++; } catch { /* process already exited */ }
       }
-      logger.warn('encoder', `Force-killed ${pids.split('\n').filter(Boolean).length} orphan ffmpeg process(es) for job #${jobId}`);
+      logger.warn('encoder', `Force-killed ${orphansKilled} orphan ffmpeg process(es) for job #${jobId}`);
     }
   } catch { /* non-critical */ }
-  // Mark as cancelled in DB
+  // Mark as ERROR (not 'cancelled') so the user can distinguish a force-kill
+  // (admin action on a hung process) from a regular cancellation. Errors stay
+  // in the queue for retry/inspection while cancelled jobs can be cleared.
+  const errMsg = `Force-killed by admin (SIGKILL). Process was unresponsive.`;
   const pool = db.getPool();
   await pool.query(
-    "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error='Force-kill par l\'utilisateur' WHERE id=? AND status IN ('pending','encoding')",
-    [jobId]
+    "UPDATE encode_jobs SET status='error', ended_at=NOW(), error=? WHERE id=? AND status IN ('pending','encoding')",
+    [errMsg, jobId]
   );
   active.delete(jobId);
   clearProgressThrottle(jobId);
-  broadcast('job_update', { id: jobId, status: 'cancelled' });
+  broadcast('job_update', { id: jobId, status: 'error', error: errMsg });
+  logger.warn('encoder', `Job #${jobId}: ${errMsg}`);
   return true;
 }
 
@@ -1196,6 +1459,8 @@ async function clearFinished() {
 function setWorkerCount(n) {
   workerCount = Math.max(1, Math.min(8, n));
   logger.info('encoder', `Worker count set to ${workerCount}`);
+  // Broadcast so the UI reflects the change without a poll
+  broadcast('encoder_state', { paused, workerCount, activeJobs: active.size });
   setImmediate(processQueue);
   return workerCount;
 }
@@ -1266,6 +1531,38 @@ async function getJobLog(jobId) {
 
 async function start() {
   running = true;
+  // Wait for the MySQL pool to actually answer before doing anything.
+  // Without this, the first processQueue tick races MySQL's TCP handshake
+  // and produces a benign-but-spammy "Queue error: connect ETIMEDOUT" on
+  // every restart. We retry up to ~30 s with exponential backoff.
+  {
+    const pool = db.getPool();
+    let delay = 250;
+    for (let attempt = 1; attempt <= 8; attempt++) {
+      try {
+        await pool.query('SELECT 1');
+        if (attempt > 1) logger.info('encoder', `MySQL pool ready after ${attempt} attempt(s)`);
+        break;
+      } catch (e) {
+        if (attempt === 8) {
+          logger.error('encoder', `MySQL pool not ready after retries: ${e.message} — proceeding anyway`);
+        } else {
+          logger.warn('encoder', `MySQL not ready (attempt ${attempt}/8): ${e.code || e.message} — retrying in ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          delay = Math.min(delay * 2, 5000);
+        }
+      }
+    }
+  }
+  // Restore persisted pause state — survives server restart so the user
+  // doesn't get a flood of jobs starting on boot if they had paused before.
+  try {
+    const persisted = await db.getSetting('queue_paused', '0');
+    paused = persisted === '1' || persisted === 1 || persisted === true;
+    if (paused) logger.info('encoder', 'Queue is PAUSED (restored from settings)');
+  } catch (e) {
+    logger.warn('encoder', `Could not restore pause state: ${e.message}`);
+  }
   await recoverStalledJobs();
   setImmediate(processQueue);
   // Watchdog: periodically nudge the queue in case it got stuck
@@ -1275,12 +1572,21 @@ async function start() {
       setImmediate(processQueue);
     }
   }, 10000);
+  // Periodic encoder_state broadcast — keeps the UI's pause/worker indicator
+  // in sync even across SSE reconnects, and lets clients reconcile state
+  // without needing a polling endpoint.
+  if (_stateBroadcastTimer) clearInterval(_stateBroadcastTimer);
+  _stateBroadcastTimer = setInterval(() => {
+    if (sseClients.size === 0) return;
+    broadcast('encoder_state', { paused, workerCount, activeJobs: active.size, running });
+  }, 15000);
   logger.info('encoder', `Encoder started with ${workerCount} worker(s)`);
 }
 
 async function stop() {
   running = false;
   if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
+  if (_stateBroadcastTimer) { clearInterval(_stateBroadcastTimer); _stateBroadcastTimer = null; }
   const jobIds = [...active.keys()];
   // Mark all active jobs as cancelled in DB BEFORE killing ffmpeg
   // This ensures DB state is correct even if the process dies immediately after
@@ -1303,6 +1609,10 @@ async function stop() {
 function setPaused(value) {
   paused = !!value;
   logger.info('encoder', paused ? 'Queue PAUSED by user' : 'Queue RESUMED by user');
+  // Persist so restart preserves pause state
+  db.setSetting('queue_paused', paused ? '1' : '0').catch((e) => {
+    logger.warn('encoder', `Failed to persist pause state: ${e.message}`);
+  });
   broadcast('encoder_state', { paused });
   if (!paused) setImmediate(processQueue); // resume processing
   return paused;

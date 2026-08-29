@@ -267,6 +267,25 @@ body {
 .progress-wrap { margin-top: 14px; }
 .progress-bar { background: var(--a-surface3); border-radius: 8px; height: 10px; margin-bottom: 6px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 8px; transition: width .3s ease; width: 0%; background: linear-gradient(90deg, var(--a-accent), var(--a-accent-h)); }
+/* Indeterminate state: a moving stripe pattern shown while we wait for the
+   first ffmpeg progress event (status=encoding, pct=0). Avoids the
+   appearance of a stuck-at-0% bar when a job has just started. */
+.progress-fill.progress-indeterminate {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--a-accent),
+    var(--a-accent) 10px,
+    var(--a-accent-h) 10px,
+    var(--a-accent-h) 20px
+  );
+  background-size: 200% 100%;
+  animation: progress-indeterminate-anim 1.2s linear infinite;
+  transition: none;
+}
+@keyframes progress-indeterminate-anim {
+  from { background-position: 0 0; }
+  to   { background-position: -56px 0; }
+}
 .progress-wrap span { font-size: 11.5px; color: var(--a-text-muted); }
 
 /* ── Paths Info ──────────────────────────────────────────── */

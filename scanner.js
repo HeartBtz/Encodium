@@ -413,21 +413,99 @@ async function syncDatabase() {
     logger.info('sync', 'Starting database sync…');
 
     const pool = getPool();
-    // Phase 1: Remove orphan DB entries (file no longer on disk)
+    // Phase 1: Remove orphan DB entries (file no longer on disk).
+    //
+    // ⚠ NFS RESILIENCE: a transient NFS hiccup (network blip, server
+    // momentarily slow) can make `fs.access` fail with ENOENT/ETIMEDOUT
+    // even though the file is fine. Without protection, we'd remove
+    // hundreds of valid videos from DB on every blip — they get re-added
+    // in Phase 2 with NEW IDs, which:
+    //   - cascades-deletes their encode_jobs (lost queue),
+    //   - changes video.id (frontend selection / filters break),
+    //   - thrashes thumbnails (regenerated for nothing).
+    //
+    // Strategy:
+    //   1. Verify each source mount root is accessible AND non-empty FIRST.
+    //      If any source is broken, abort the sync entirely — the user gets
+    //      a clear error instead of silently losing their library.
+    //   2. For every candidate orphan, double-check by stat'ing the parent
+    //      directory. If the parent dir is also missing, it's a mount issue
+    //      → keep the entry (don't remove).
+    //   3. Re-check every "missing" file ONE more time after a 200ms delay
+    //      to dodge transient NFS hiccups.
+    const sourcePaths = await getSourcePaths();
+    if (!sourcePaths.length) {
+      logger.error('sync', 'No media sources configured');
+      throw new Error('No media sources configured. Add at least one source directory in Settings.');
+    }
+    // Mount sanity check: each source must exist AND contain at least one
+    // entry. An empty mount almost always means "NFS not mounted yet" —
+    // safer to abort than wipe the DB.
+    for (const src of sourcePaths) {
+      try {
+        const entries = await fs.promises.readdir(src);
+        if (entries.length === 0) {
+          const msg = `Source "${src}" appears empty — refusing to sync (likely NFS mount issue)`;
+          logger.error('sync', msg);
+          syncProgress.running = false;
+          syncProgress.errors++;
+          syncProgress.finishedAt = new Date().toISOString();
+          throw new Error(msg);
+        }
+      } catch (e) {
+        if (e.message.includes('refusing to sync')) throw e;
+        const msg = `Source "${src}" not accessible (${e.code || e.message}) — aborting sync`;
+        logger.error('sync', msg);
+        syncProgress.running = false;
+        syncProgress.errors++;
+        syncProgress.finishedAt = new Date().toISOString();
+        throw new Error(msg);
+      }
+    }
+
     const [dbRows] = await pool.query('SELECT id, file_path FROM videos');
     const dbPaths = new Map(); // file_path → id
     for (const r of dbRows) dbPaths.set(r.file_path, r.id);
     syncProgress.total = dbRows.length;
     logger.info('sync', `Phase 1: Checking ${dbRows.length} DB entries against disk…`);
 
-    const toRemove = [];
+    const candidates = [];
     for (const [fp, id] of dbPaths) {
       try {
         await fs.promises.access(fp, fs.constants.F_OK);
       } catch {
-        toRemove.push(id);
+        candidates.push({ id, fp });
       }
       syncProgress.done++;
+    }
+
+    // Re-verify candidates with parent-dir check + retry to avoid NFS-flap mass deletions.
+    const toRemove = [];
+    if (candidates.length) {
+      logger.info('sync', `Phase 1b: Re-verifying ${candidates.length} candidate orphan(s) (NFS-safe double-check)…`);
+      // Small delay lets transient NFS issues clear
+      await new Promise(r => setTimeout(r, 200));
+      for (const { id, fp } of candidates) {
+        // Check parent dir first — if it's gone, it's a mount issue, keep the entry.
+        const parent = path.dirname(fp);
+        let parentOk = false;
+        try { await fs.promises.access(parent, fs.constants.F_OK); parentOk = true; } catch { /* parent missing */ }
+        if (!parentOk) {
+          // Parent dir vanished — almost certainly NFS-related, NOT a real deletion.
+          continue;
+        }
+        // Parent dir exists but file doesn't → re-check the file itself once more.
+        try {
+          await fs.promises.access(fp, fs.constants.F_OK);
+          // File came back on retry — was a transient hiccup.
+        } catch {
+          toRemove.push(id);
+        }
+      }
+      const transient = candidates.length - toRemove.length;
+      if (transient > 0) {
+        logger.warn('sync', `Skipped ${transient} entries that look like NFS hiccups (parent dir missing or file came back on retry)`);
+      }
     }
 
     if (toRemove.length) {
@@ -457,11 +535,8 @@ async function syncDatabase() {
       if (fp) existingPaths.delete(fp);
     }
 
-    const sourcePaths = await getSourcePaths();
-    if (!sourcePaths.length) {
-      logger.error('sync', 'No media sources configured');
-      throw new Error('No media sources configured. Add at least one source directory in Settings.');
-    }
+    // Note: sourcePaths already validated and bound above (Phase 1 mount check).
+    // Phase 2 reuses the same array — no need to re-fetch / re-validate.
 
     let batch = [];
     let addCount = 0;

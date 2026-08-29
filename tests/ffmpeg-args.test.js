@@ -43,7 +43,7 @@ test('AMD VA-API runs CPU filters before upload and preserves 10-bit surfaces', 
   );
 
   assert.equal(optionValue(result.swArgs, '-vf'), 'scale=-2:720,format=p010le,hwupload');
-  assert.equal(optionValue(result.swArgs, '-profile:v'), 'main10');
+  assert.equal(optionValue(result.swArgs, '-profile:v:0'), 'main10');
   assert.equal(result.swArgs.includes('-pix_fmt'), false);
 });
 
@@ -55,7 +55,7 @@ test('AMD AV1 VA-API infers its profile from P010 instead of using HEVC main10',
   );
 
   assert.equal(optionValue(result.swArgs, '-vf'), 'format=p010le,hwupload');
-  assert.equal(result.swArgs.includes('-profile:v'), false);
+  assert.equal(result.swArgs.includes('-profile:v:0'), false);
 });
 
 test('NVIDIA NVENC keeps zero-filter decode frames in CUDA memory', () => {

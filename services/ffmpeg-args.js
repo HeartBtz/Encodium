@@ -48,7 +48,9 @@ function mimeForExt(ext) {
  */
 function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   const {
-    colorMeta, bitDepth, isHdr, caps: encCaps, badSubIndices,
+    colorMeta, bitDepth, isHdr, caps: encCaps,
+    badSubIndices, subtitleStreams = [],
+    validSecondaryVideoIndices = [], badVideoIndices = [],
     vaapiDevice,
   } = probeInfo;
 
@@ -67,7 +69,16 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
 
   // Tonemapping: if requested and video is HDR, force SDR output
   const doTonemap = !!(encodeOpts.tonemap && isHdr);
-  const pixFmt = (!doTonemap && (bitDepth >= 10 || isHdr)) ? 'p010le' : 'yuv420p';
+
+  // Pixel format selection — must match what the encoder actually supports.
+  // h264_nvenc does NOT support 10-bit (yuv420p10/p010) on consumer cards;
+  // forcing p010le there causes "no NVENC capable devices found for 10 bit".
+  // libx264 only natively supports 8-bit unless built with --bit-depth=10.
+  const wants10Bit = !doTonemap && (bitDepth >= 10 || isHdr);
+  const encoderSupports10Bit = !['h264_nvenc', 'libx264'].includes(preset.encoder);
+  const pixFmt = (wants10Bit && encoderSupports10Bit)
+    ? (preset.encoder === 'libx265' ? 'yuv420p10le' : 'p010le')
+    : 'yuv420p';
 
   // Downscale resolution
   const downscale = encodeOpts.downscale ? parseInt(encodeOpts.downscale, 10) : 0;
@@ -98,13 +109,41 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
     vfFilters.push(`format=${surfaceFormat}`, 'hwupload');
   }
 
-  // Map streams — MKV only supports video/audio/subtitles
-  if (isMkv) {
-    tail.push('-map', '0:v', '-map', '0:a?', '-map', '0:s?');
-  } else {
-    tail.push('-map', '0');
+  // Subtitle codecs that can never be muxed regardless of container.
+  // "none" means ffprobe could not identify the codec at all — ffmpeg will
+  // refuse to copy or transcode it and the whole job fails with code 218.
+  const alwaysDropSubs = new Set(['none', 'unknown', '']);
+
+  // MP4-specific incompatible codecs (image-based or unsupported muxer).
+  const mp4IncompatibleSubs = new Set([
+    'hdmv_pgs_subtitle', 'pgs', 'dvd_subtitle', 'dvb_subtitle',
+    'xsub', 'webvtt',
+  ]);
+
+  const dropSubIdx = new Set(badSubIndices.map(i => String(i)));
+  for (const s of subtitleStreams) {
+    // Always drop streams with unknown/none codec — they crash the muxer.
+    if (alwaysDropSubs.has(s.codec)) {
+      dropSubIdx.add(String(s.idx));
+    } else if (!isMkv && mp4IncompatibleSubs.has(s.codec)) {
+      // MP4: also drop image-based subs and webvtt (not supported by mp4 muxer).
+      dropSubIdx.add(String(s.idx));
+    }
   }
-  for (const idx of badSubIndices) {
+
+  // Map all streams, then exclude bad subtitle and bad video streams via negative -map.
+  // Bad video streams (e.g. mjpeg JPEG LS with no dimensions) crash the muxer with
+  // "dimensions not set" — they MUST be explicitly excluded.
+  tail.push('-map', '0:v', '-map', '0:a?', '-map', '0:s?');
+  if (!isMkv) {
+    // MP4 cannot carry attachments (fonts, cover art as data stream, etc.)
+    // '-map 0:s?' already handles subs; we just need to skip data/attachment streams.
+  }
+  for (const idx of dropSubIdx) {
+    tail.push('-map', `-0:${idx}`);
+  }
+  // Exclude video streams with missing/invalid dimensions — these always crash ffmpeg.
+  for (const idx of badVideoIndices) {
     tail.push('-map', `-0:${idx}`);
   }
   tail.push('-map_metadata', '0', '-map_chapters', '0');
@@ -113,26 +152,48 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
     tail.push('-vf', vfFilters.join(','));
   }
 
-  // Video encoder
+  // Copy any secondary video streams (e.g. cover art) explicitly.
+  // We only copy streams that have valid dimensions and a known pixel format
+  // (validSecondaryVideoIndices). Streams with pix_fmt='none' or missing size
+  // are excluded by the negative -map above and must NOT get a -c:v:N copy flag.
+  // The output stream index starts at 1 (primary video = 0).
+  for (let i = 0; i < validSecondaryVideoIndices.length; i++) {
+    tail.push(`-c:v:${i + 1}`, 'copy');
+  }
+
+  // Video encoder for primary stream
   tail.push('-c:v:0', preset.encoder);
 
-  // Preset (NVENC p1-p7)
-  const nvencPreset = preset.nvencPreset || 'p6';
+  // Preset (NVENC p1-p7) — stream-specific to avoid contaminating secondary streams.
+  // Validate against the known NVENC preset names (p1-p7 = perf→quality;
+  // legacy "default", "fast", "medium", "slow", "hp", "hq", "ll", "llhq",
+  // "llhp", "lossless", "losslesshp" still accepted by older ffmpeg). If the
+  // user provides garbage we fall back to p6 (high quality).
+  const VALID_NVENC_PRESETS = new Set([
+    'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7',
+    'default', 'fast', 'medium', 'slow', 'hp', 'hq',
+    'll', 'llhq', 'llhp', 'lossless', 'losslesshp',
+  ]);
+  let nvencPreset = preset.nvencPreset || 'p6';
+  if (!VALID_NVENC_PRESETS.has(nvencPreset)) nvencPreset = 'p6';
   if (isNvidia) {
-    tail.push('-preset', nvencPreset);
+    tail.push('-preset:v:0', nvencPreset);
   }
   // VA-API doesn't use -preset
 
   // HEVC calls its 10-bit profile "main10". AV1 uses main/high/
-  // professional profiles instead, so its profile must be inferred from the
-  // P010 input surface rather than receiving an invalid HEVC profile name.
-  if (pixFmt === 'p010le' && preset.codec === 'h265' && encCaps.profile) {
-    tail.push('-profile:v', 'main10');
+  // professional profiles instead and infers the profile from P010 input.
+  const is10BitPix = pixFmt === 'p010le' || pixFmt === 'yuv420p10le';
+  if (is10BitPix && preset.codec === 'h265' && encCaps.profile) {
+    tail.push('-profile:v:0', 'main10');
   }
 
-  // Tune (only for NVENC)
+  // Tune (only for NVENC) — stream-specific. Validate similarly.
+  const VALID_NVENC_TUNES = new Set(['hq', 'll', 'ull', 'lossless']);
   if (encCaps.tune && isNvidia) {
-    tail.push('-tune', preset.nvencTune || 'hq');
+    let nvencTune = preset.nvencTune || 'hq';
+    if (!VALID_NVENC_TUNES.has(nvencTune)) nvencTune = 'hq';
+    tail.push('-tune:v:0', nvencTune);
   }
 
   // Rate control
@@ -154,10 +215,10 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   } else if (isVaapi) {
     tail.push('-rc_mode', 'CQP', '-global_quality', String(cq));
   } else if (preset.type === 'qsv') {
-    tail.push('-global_quality', String(cq), '-preset', 'medium');
+    tail.push('-global_quality', String(cq), '-preset:v:0', 'medium');
   } else {
-    if (preset.encoder === 'libx265') tail.push('-crf', String(cq), '-preset', 'medium');
-    else if (preset.encoder === 'libsvtav1') tail.push('-crf', String(cq), '-preset', '6');
+    if (preset.encoder === 'libx265') tail.push('-crf', String(cq), '-preset:v:0', 'medium');
+    else if (preset.encoder === 'libsvtav1') tail.push('-crf', String(cq), '-preset:v:0', '6');
     else if (preset.encoder === 'libaom-av1') tail.push('-crf', String(cq), '-cpu-used', '4');
   }
 
@@ -182,9 +243,18 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   // Timestamp preservation
   tail.push('-fps_mode', 'passthrough');
 
-  // Audio/Subs: copy
-  tail.push('-c:a', 'copy', '-c:s', 'copy');
-  if (!isMkv) tail.push('-c:d', 'copy', '-c:t', 'copy');
+  // Audio: always copy. Subtitles: copy as-is for MKV; for MP4, transcode
+  // to mov_text (the only subtitle codec MP4 supports). If the source
+  // subtitle is incompatible (WebVTT, PGS image-based, etc.), ffmpeg
+  // would still fail — those need to be in badSubIndices upstream.
+  tail.push('-c:a', 'copy');
+  if (isMkv) {
+    tail.push('-c:s', 'copy');
+  } else {
+    tail.push('-c:s', 'mov_text');
+  }
+  // Note: -c:d / -c:t (data/attachments) are intentionally NOT set for MP4
+  // because we don't map those streams (MP4 doesn't support font attachments).
 
   // Container-specific
   if (!isMkv) tail.push('-movflags', '+faststart');

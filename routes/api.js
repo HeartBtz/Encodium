@@ -442,7 +442,10 @@ router.get('/encode/status', requireAuth, (req, res) => {
 router.get('/encode/history', requireAuth, async (req, res) => {
   try {
     const { limit = 50, offset = 0 } = req.query;
-    const data = await encoder.getHistory(parseInt(limit, 10), parseInt(offset, 10));
+    // Cap limit to 1000 to avoid DOS / DB load on large histories
+    const safeLimit = Math.max(1, Math.min(1000, parseInt(limit, 10) || 50));
+    const safeOffset = Math.max(0, parseInt(offset, 10) || 0);
+    const data = await encoder.getHistory(safeLimit, safeOffset);
     res.json(data);
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
@@ -644,14 +647,46 @@ router.get('/custom-presets', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
+// CQ ranges per codec (constant-quality target).
+// AV1 supports 0-63; H.265/H.264 use 0-51.
+const CQ_RANGES = { av1: [0, 63], h265: [0, 51], hevc: [0, 51], h264: [0, 51], avc: [0, 51] };
+// Containers we explicitly support
+const ALLOWED_CONTAINERS = new Set(['auto', 'mkv', 'mp4']);
+// Downscale heights — must be a known target or empty
+const ALLOWED_DOWNSCALE = new Set(['', '480', '720', '1080', '1440', '2160']);
+
 router.post('/custom-presets', requireAuth, async (req, res) => {
   try {
     const { name, codec, cq, container, downscale, tonemap, extra_args } = req.body;
-    if (!name) return res.status(400).json({ error: 'name required' });
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'name required' });
+    }
+    const codecKey = (codec || 'h265').toString().toLowerCase();
+    const range = CQ_RANGES[codecKey];
+    if (!range) {
+      return res.status(400).json({ error: `Unsupported codec '${codec}' — must be one of: av1, h265, h264` });
+    }
+    const cqNum = parseInt(cq, 10);
+    if (cq !== undefined && cq !== null && cq !== '') {
+      if (!Number.isFinite(cqNum) || cqNum < range[0] || cqNum > range[1]) {
+        return res.status(400).json({
+          error: `CQ value ${cq} out of range for ${codecKey} (allowed: ${range[0]}-${range[1]})`,
+        });
+      }
+    }
+    const containerVal = (container || 'auto').toString().toLowerCase();
+    if (!ALLOWED_CONTAINERS.has(containerVal)) {
+      return res.status(400).json({ error: `Invalid container '${container}'` });
+    }
+    const downscaleVal = downscale != null ? String(downscale) : '';
+    if (!ALLOWED_DOWNSCALE.has(downscaleVal)) {
+      return res.status(400).json({ error: `Invalid downscale '${downscale}' — must be empty, 480, 720, 1080, 1440 or 2160` });
+    }
     const pool = db.getPool();
     const [result] = await pool.query(
       'INSERT INTO custom_presets (name, codec, cq, container, downscale, tonemap, extra_args) VALUES (?,?,?,?,?,?,?)',
-      [name, codec || 'h265', cq || 23, container || 'auto', downscale || '', tonemap ? 1 : 0, extra_args || '']
+      [name.trim(), codecKey, Number.isFinite(cqNum) ? cqNum : (codecKey === 'av1' ? 30 : 23),
+        containerVal, downscaleVal, tonemap ? 1 : 0, (extra_args || '').toString().slice(0, 500)]
     );
     res.json({ id: result.insertId, ok: true });
   } catch (e) { res.status(500).json({ error: safeError(e) }); }

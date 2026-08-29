@@ -640,13 +640,33 @@
     try {
       const folders = await api('/folders');
       const sel = $('#lib-folder');
+      // Preserve the user's current selection — if the folder still exists
+      // after the refresh, restore it. Without this, every periodic sync
+      // re-renders the dropdown and silently wipes whatever filter the user
+      // had selected, which is incredibly annoying.
+      const previousValue = sel.value;
       sel.innerHTML = `<option value="">${t('lib.all_folders')}</option>`;
+      let foundPrevious = false;
       folders.forEach(f => {
         const o = document.createElement('option');
         o.value = f.folder;
         o.textContent = `${f.folder} (${f.count})`;
+        if (f.folder === previousValue) foundPrevious = true;
         sel.appendChild(o);
       });
+      // Restore selection if the folder still exists.
+      if (foundPrevious) sel.value = previousValue;
+      else if (previousValue) {
+        // The folder is gone — leave it as a "stale" option so the user
+        // can see why their filter cleared, then it falls back to "all"
+        // on next interaction. We don't auto-trigger a reload here.
+        const stale = document.createElement('option');
+        stale.value = previousValue;
+        stale.textContent = `${previousValue} (∅)`;
+        stale.disabled = true;
+        sel.appendChild(stale);
+        sel.value = '';
+      }
     } catch { /* non-critical */ }
   }
 
@@ -1007,13 +1027,22 @@
           ${showProgress ? (() => {
             const cached = liveProgress.get(j.id);
             const pct = cached ? cached.percent : (j.progress || 0);
-            // Seed liveProgress from DB so subsequent in-place updates have a baseline
-            if (!cached && pct > 0) liveProgress.set(j.id, { percent: pct, speed: '', fps: '' });
+            // Always seed liveProgress so subsequent in-place SSE updates have
+            // a baseline — even at 0%, so an unrelated re-render doesn't lose
+            // the state. (Previously only seeded when pct>0, which broke the
+            // bar for jobs that just started.)
+            if (!cached) liveProgress.set(j.id, { percent: pct, speed: '', fps: '' });
             const label = cached && cached.text ? cached.text : pct + '%';
+            // When status is encoding and pct=0, show an indeterminate
+            // (animated) bar so the user knows work is starting — otherwise
+            // a static 0% looks like the job is stuck.
+            const isStarting = j.status === 'encoding' && pct === 0;
+            const fillCls = isStarting ? 'progress-fill progress-indeterminate' : 'progress-fill';
+            const labelText = isStarting ? '…' : label;
             return `
             <div class="enc-job-progress">
-              <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-              <div class="enc-job-pct">${label}</div>
+              <div class="progress-bar"><div class="${fillCls}" style="width:${isStarting ? 100 : pct}%"></div></div>
+              <div class="enc-job-pct">${labelText}</div>
             </div>`;
           })() : ''}
           <div class="enc-job-actions">
@@ -1115,7 +1144,11 @@
     if (!job) return;
     const fill = job.querySelector('.progress-fill');
     const pctEl = job.querySelector('.enc-job-pct');
-    if (fill) fill.style.width = d.percent + '%';
+    if (fill) {
+      // Real progress arriving — drop the indeterminate animation
+      fill.classList.remove('progress-indeterminate');
+      fill.style.width = d.percent + '%';
+    }
     if (pctEl) pctEl.textContent = d.percent + '%';
   }
 
