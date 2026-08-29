@@ -40,6 +40,7 @@ while IFS= read -r member; do
 done < <(tar -tzf "$archive")
 
 staging="$(mktemp -d /opt/encodium-deploy.XXXXXX)"
+chmod 755 "$staging"
 readonly timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 readonly backup_root="/opt/encodium-deployment-backups/${timestamp}-${deploy_sha}"
 services_stopped=0
