@@ -15,6 +15,11 @@ if [[ "$archive" != "/tmp/encodium-release-${deploy_sha}.tgz" || ! -f "$archive"
   exit 65
 fi
 
+# The receiver deliberately creates the uploaded archive with umask 077. The
+# extracted application and npm runtime dependencies must remain readable by
+# the unprivileged service account.
+umask 022
+
 staging=''
 cleanup() {
   if [[ -n "$staging" && -d "$staging" ]]; then
