@@ -24,7 +24,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for command in tar rsync npm node systemctl curl; do
+for command in tar rsync npm node systemctl curl runuser; do
   command -v "$command" >/dev/null || { echo "Missing command: $command" >&2; exit 69; }
 done
 
@@ -40,7 +40,6 @@ while IFS= read -r member; do
 done < <(tar -tzf "$archive")
 
 staging="$(mktemp -d /opt/encodium-deploy.XXXXXX)"
-chmod 755 "$staging"
 readonly timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 readonly backup_root="/opt/encodium-deployment-backups/${timestamp}-${deploy_sha}"
 services_stopped=0
@@ -67,6 +66,9 @@ on_exit() {
 trap on_exit EXIT
 
 tar -xzf "$archive" -C "$staging"
+# A tarball created from `.` carries metadata for its root entry and can reset
+# mktemp's directory mode. Apply the service-readable mode after extraction.
+chmod 755 "$staging"
 if find "$staging" -type l -print -quit | grep -q .; then
   echo "Release archives may not contain symbolic links" >&2
   exit 65
@@ -107,6 +109,10 @@ for target in "${targets[@]}"; do
     "$staging/" "$target/"
   printf '%s\n' "$deploy_sha" > "$target/.deployed-sha"
   chmod 600 "$target/.env"
+  runuser -u plex -- test -r "$target/node_modules/dotenv/package.json" || {
+    echo "Runtime dependencies are not readable by plex in $target" >&2
+    exit 66
+  }
 done
 
 systemctl start "${services[@]}"
