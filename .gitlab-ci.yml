@@ -5,6 +5,8 @@ stages:
 
 default:
   interruptible: true
+  tags:
+    - homelab
   before_script:
     - node --version
     - npm --version
