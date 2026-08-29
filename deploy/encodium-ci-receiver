@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly original_command="${SSH_ORIGINAL_COMMAND:-}"
+if [[ ! "$original_command" =~ ^deploy[[:space:]]([0-9a-f]{40})$ ]]; then
+  echo "Denied" >&2
+  exit 64
+fi
+
+readonly deploy_sha="${BASH_REMATCH[1]}"
+readonly archive="/tmp/encodium-release-${deploy_sha}.tgz"
+umask 077
+timeout 120 head -c 104857601 > "$archive"
+
+readonly archive_size="$(stat -c %s "$archive")"
+if (( archive_size == 0 || archive_size > 104857600 )); then
+  echo "Invalid archive size" >&2
+  exit 65
+fi
+
+exec /usr/local/sbin/encodium-deploy "$deploy_sha" "$archive"
+

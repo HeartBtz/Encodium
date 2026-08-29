@@ -2,7 +2,9 @@
 
 **Self-hosted video encoding platform** — scan, browse and batch-encode your video library with GPU-accelerated H.265/AV1 encoding.
 
-![Node.js](https://img.shields.io/badge/node-18%2B-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey) ![Version](https://img.shields.io/badge/version-1.5.0-purple)
+![Node.js](https://img.shields.io/badge/node-18%2B-green) ![License](https://img.shields.io/badge/license-MIT-blue) ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey) ![Version](https://img.shields.io/badge/version-1.6.0-purple)
+
+Version 1.6 adds capability-based AMD/Intel VA-API support, preserves NVIDIA NVENC/CUDA paths, and hardens authentication, webhooks, streaming and browser security. The production pipeline validates, packages and deploys the same release atomically to both Encodium instances.
 
 ---
 
@@ -122,12 +124,15 @@ The install script is idempotent — `bash install.sh` also works for updates.
 | Variable | Default | Description |
 |---|---|---|
 | `DB_PASS` | — | **Required.** Server refuses to start without it |
-| `JWT_SECRET` | — | **Recommended.** Random ephemeral secret if unset (tokens invalidated on restart) |
+| `JWT_SECRET` | — | **Required in production (32+ chars).** Random ephemeral secret outside production if unset |
 | `DB_HOST` | `localhost` | MariaDB host |
 | `DB_PORT` | `3306` | MariaDB port |
 | `DB_USER` | `encodium` | Database user |
 | `DB_NAME` | `encodium` | Database name |
 | `NODE_ENV` | — | Set to `production` to hide error details |
+| `COOKIE_SECURE` | `false` | Force the session cookie to HTTPS-only (recommended behind TLS) |
+| `CORS_ORIGINS` | — | Optional comma-separated origin allowlist; cross-origin access is denied by default |
+| `AUTH_RETURN_BEARER_TOKEN` | `false` | Return a bearer token at login for explicit API clients |
 | `PORT` | `4000` | HTTP server port |
 | `ENCODE_DIR` | `./data/encoded` | Encoded output directory |
 | `THUMB_DIR` | `./data/thumbs` | Thumbnail storage |
@@ -171,12 +176,14 @@ Encodium/
 ├── install.sh               # Autonomous installer
 ├── ecosystem.config.js      # PM2 config (fallback for containers)
 ├── middleware/
-│   └── auth.js              # JWT auth (sign, verify, requireAuth, requireAdmin)
+│   └── auth.js              # JWT cookie/bearer auth and role guards
 ├── services/
 │   ├── encoder.js           # Queue processor, GPU allocation, retry logic
 │   ├── ffprobe.js           # ffprobe wrapper & stream analysis
 │   ├── ffmpeg-args.js       # ffmpeg argument builder (HW/SW paths)
 │   ├── webhook.js           # Discord & HTTP webhook notifications
+│   ├── network-security.js  # Webhook SSRF and DNS-rebinding protection
+│   ├── http-range.js        # Strict bounded streaming ranges
 │   ├── watcher.js           # fs.watch + periodic sync + SSE pipeline
 │   ├── gpu-detect.js        # Hardware detection (NVIDIA, VA-API, QSV, CPU)
 │   └── logger.js            # Ring-buffer logging + SSE broadcast
@@ -188,6 +195,8 @@ Encodium/
 │   ├── js/app.js            # Frontend application
 │   ├── js/i18n.js           # i18n engine
 │   └── lang/                # 14 language packs
+├── deploy/                  # Restricted dual-instance production deployer
+├── .gitlab-ci.yml           # Verify, package and manual production deploy
 ├── Dockerfile               # Multi-stage Docker build
 ├── docker-compose.yml       # Docker Compose (CPU + GPU profiles)
 └── data/
@@ -218,12 +227,14 @@ Migrations run automatically on startup.
 
 - **Helmet** — HTTP security headers
 - **Rate limiting** — 1200 req/min on API; 10 req/15min on login
-- **JWT auth** — all API routes require valid Bearer token
+- **JWT auth** — `HttpOnly`, `SameSite=Strict` cookie by default; optional bearer token for API clients
 - **Admin-only guards** — destructive ops, source management, filesystem browse
 - **Bcrypt** — password hashing (cost 10–12)
 - **Parameterized SQL** — prepared statements everywhere
 - **Input validation** — sort columns whitelisted, pagination coerced
 - **Webhook SSRF protection** — private/internal IPs blocked
+- **CSP and local assets** — scripts restricted to the application origin; no runtime CDN dependency
+- **Supply-chain checks** — dependency audit, secret patterns and syntax checked in CI
 - **Error sanitization** — stack traces hidden in production
 - **Graceful shutdown** — SIGTERM/SIGINT drain active jobs (8s timeout)
 
@@ -232,6 +243,12 @@ Migrations run automatically on startup.
 - Set a strong `JWT_SECRET` (≥ 32 chars)
 - Run behind a reverse proxy (nginx/Caddy) with TLS
 - Restrict MariaDB network access
+
+### Production pipeline
+
+GitLab CI runs tests, linting, dependency/security checks, then creates one immutable release artifact. The manual `deploy-production` job sends that artifact through a restricted SSH key and deploys it to `/opt/Encodium` and `/opt/EncodiumPlex` on CT111. The receiver preserves `.env`, `data`, Git metadata and media, refuses deployment while an Encodium FFmpeg process is active, snapshots both applications, and rolls both back if either health check fails.
+
+The server-side receiver and deployer live in `deploy/`. Install them as root-owned executables and restrict the CI public key to `encodium-ci-receiver`; never give the runner an unrestricted root shell.
 
 ---
 
@@ -308,6 +325,15 @@ Migrations run automatically on startup.
 ---
 
 ## Changelog
+
+### v1.6.0
+
+- Fixed AMD/Intel VA-API frame uploads with explicit render-node selection and `format=nv12|p010le,hwupload`
+- Kept NVIDIA NVENC/CUDA zero-copy paths and added regression tests for both GPU families
+- Detects actual encode capabilities on every VA-API render node; QSV is shown only for Intel devices
+- Replaced URL/localStorage JWTs with hardened session cookies and tightened administrative permissions
+- Added SSRF/DNS-rebinding protection, strict HTTP ranges, CSP, local Chart.js and dependency security checks
+- Added a manual, atomic GitLab production pipeline for both Encodium instances with rollback and health checks
 
 ### v1.5.0
 

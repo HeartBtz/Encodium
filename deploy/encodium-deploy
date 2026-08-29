@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly deploy_sha="${1:-}"
+readonly archive="${2:-}"
+readonly targets=(/opt/Encodium /opt/EncodiumPlex)
+readonly services=(encodium.service encodiumPlex.service)
+
+if [[ ! "$deploy_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Invalid commit SHA" >&2
+  exit 64
+fi
+if [[ "$archive" != "/tmp/encodium-release-${deploy_sha}.tgz" || ! -f "$archive" || -L "$archive" ]]; then
+  echo "Invalid release archive" >&2
+  exit 65
+fi
+for command in tar rsync npm node systemctl curl; do
+  command -v "$command" >/dev/null || { echo "Missing command: $command" >&2; exit 69; }
+done
+
+while IFS= read -r member; do
+  normalized="${member#./}"
+  if [[ "$normalized" == /* || "$normalized" == ".." || "$normalized" == ../* || "$normalized" == */../* ||
+        "$normalized" == .env || "$normalized" == .env.* || "$normalized" == data || "$normalized" == data/* ||
+        "$normalized" == .git || "$normalized" == .git/* || "$normalized" == .deployment-backups/* ]]; then
+    echo "Unsafe archive member: $member" >&2
+    exit 65
+  fi
+done < <(tar -tzf "$archive")
+
+readonly staging="$(mktemp -d /opt/encodium-deploy.XXXXXX)"
+readonly timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+readonly backup_root="/opt/encodium-deployment-backups/${timestamp}-${deploy_sha}"
+services_stopped=0
+
+cleanup() {
+  rm -rf -- "$staging"
+  rm -f -- "$archive"
+}
+
+rollback() {
+  local index
+  echo "Deployment failed; restoring ${backup_root}" >&2
+  for index in "${!targets[@]}"; do
+    if [[ -d "$backup_root/$index" ]]; then
+      rsync -a --delete \
+        --exclude=.env --exclude=data --exclude=.git --exclude=.deployment-backups \
+        "$backup_root/$index/" "${targets[$index]}/"
+    fi
+  done
+  systemctl start "${services[@]}" || true
+}
+
+on_exit() {
+  status=$?
+  if (( status != 0 && services_stopped == 1 )); then rollback; fi
+  cleanup
+  exit "$status"
+}
+trap on_exit EXIT
+
+tar -xzf "$archive" -C "$staging"
+if find "$staging" -type l -print -quit | grep -q .; then
+  echo "Release archives may not contain symbolic links" >&2
+  exit 65
+fi
+for required in server.js package.json package-lock.json services/encoder.js services/ffmpeg-args.js; do
+  [[ -f "$staging/$required" ]] || { echo "Archive missing $required" >&2; exit 65; }
+done
+
+node --check "$staging/server.js"
+node --check "$staging/services/encoder.js"
+node --check "$staging/services/ffmpeg-args.js"
+npm ci --omit=dev --ignore-scripts --prefix "$staging"
+
+if pgrep -u plex -f 'ffmpeg.*\.tmp\.' >/dev/null; then
+  echo "Active Encodium ffmpeg process detected; retry after the queue is idle" >&2
+  exit 75
+fi
+
+mkdir -p "$backup_root"
+for index in "${!targets[@]}"; do
+  target="${targets[$index]}"
+  [[ -d "$target" && -f "$target/.env" && -d "$target/data" ]] || {
+    echo "Target is missing preserved state: $target" >&2
+    exit 66
+  }
+  mkdir -p "$backup_root/$index"
+  rsync -a \
+    --exclude=.env --exclude=data --exclude=.git --exclude=.deployment-backups \
+    "$target/" "$backup_root/$index/"
+done
+
+systemctl stop "${services[@]}"
+services_stopped=1
+
+for target in "${targets[@]}"; do
+  rsync -a --delete \
+    --exclude=.env --exclude=data --exclude=.git --exclude=.deployment-backups \
+    "$staging/" "$target/"
+  printf '%s\n' "$deploy_sha" > "$target/.deployed-sha"
+  chmod 600 "$target/.env"
+done
+
+systemctl start "${services[@]}"
+
+for index in "${!targets[@]}"; do
+  target="${targets[$index]}"
+  service="${services[$index]}"
+  systemctl is-active --quiet "$service"
+  port="$(sed -n 's/^PORT=//p' "$target/.env" | tail -n 1)"
+  [[ "$port" =~ ^[0-9]{1,5}$ ]] || { echo "Invalid PORT in $target" >&2; exit 66; }
+  for attempt in {1..20}; do
+    if curl --fail --silent --show-error --max-time 3 "http://127.0.0.1:${port}/api/health" >/dev/null; then break; fi
+    if (( attempt == 20 )); then echo "Health check failed for $service" >&2; exit 70; fi
+    sleep 1
+  done
+done
+
+services_stopped=0
+echo "Deployed ${deploy_sha} to Encodium and EncodiumPlex"

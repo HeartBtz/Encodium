@@ -1,0 +1,60 @@
+stages:
+  - verify
+  - package
+  - deploy
+
+default:
+  interruptible: true
+  before_script:
+    - node --version
+    - npm --version
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+cache:
+  key:
+    files:
+      - package-lock.json
+  paths:
+    - .npm/
+
+verify:
+  stage: verify
+  script:
+    - npm ci --ignore-scripts
+    - npm test
+    - npm run lint
+    - npm run security
+
+package-production:
+  stage: package
+  needs:
+    - verify
+  script:
+    - mkdir -p dist
+    - tar --exclude=.git --exclude=.env --exclude=data --exclude=node_modules --exclude=.npm --exclude=dist -czf "dist/encodium-${CI_COMMIT_SHA}.tgz" .
+    - test -s "dist/encodium-${CI_COMMIT_SHA}.tgz"
+  artifacts:
+    name: "encodium-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - "dist/encodium-${CI_COMMIT_SHA}.tgz"
+    expire_in: 14 days
+
+deploy-production:
+  stage: deploy
+  needs:
+    - package-production
+  interruptible: false
+  resource_group: encodium-production
+  environment:
+    name: production
+    url: http://192.168.1.111
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+    - when: never
+  script:
+    - test -r "$HOME/.ssh/encodium_deploy_ed25519"
+    - test -r "$HOME/.ssh/known_hosts"
+    - ssh -i "$HOME/.ssh/encodium_deploy_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes root@192.168.1.111 "deploy ${CI_COMMIT_SHA}" < "dist/encodium-${CI_COMMIT_SHA}.tgz"
