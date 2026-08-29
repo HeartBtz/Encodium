@@ -8,6 +8,7 @@
 
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const fsp = require('fs/promises');
 const exec = promisify(execFile);
 
 let _cache = null;
@@ -28,18 +29,37 @@ async function detectNvidia() {
   });
 }
 
+function parseVaapiOutput(out, device) {
+  if (!out || !out.trim()) return null;
+  const driverMatch = out.match(/Driver version:\s*(.+)/i);
+  const lower = out.toLowerCase();
+  const encoders = [];
+  if (/VAProfileHEVC(?:Main|Main10)[^\n]*VAEntrypointEncSlice/i.test(out)) encoders.push('hevc_vaapi');
+  if (/VAProfileAV1Profile0[^\n]*VAEntrypointEncSlice/i.test(out)) encoders.push('av1_vaapi');
+  if (/VAProfileH264\w*[^\n]*VAEntrypointEncSlice/i.test(out)) encoders.push('h264_vaapi');
+  return {
+    device,
+    driver: driverMatch ? driverMatch[1].trim() : 'unknown',
+    vendor: lower.includes('amd') || lower.includes('radeon') ? 'AMD'
+          : lower.includes('intel') ? 'Intel' : 'unknown',
+    encoders,
+  };
+}
+
 async function detectVaapi() {
   const devices = [];
-  for (const dev of ['/dev/dri/renderD128', '/dev/dri/renderD129', '/dev/dri/renderD130']) {
+  let renderNodes = [];
+  try {
+    renderNodes = (await fsp.readdir('/dev/dri'))
+      .filter(name => /^renderD\d+$/.test(name))
+      .sort((a, b) => Number(a.slice(7)) - Number(b.slice(7)))
+      .map(name => `/dev/dri/${name}`);
+  } catch { return devices; }
+
+  for (const dev of renderNodes) {
     const out = await run('vainfo', ['--display', 'drm', '--device', dev]);
-    if (!out) continue;
-    const driverMatch = out.match(/Driver version:\s*(.+)/i);
-    devices.push({
-      device: dev,
-      driver: driverMatch ? driverMatch[1].trim() : 'unknown',
-      vendor: out.toLowerCase().includes('amd') || out.toLowerCase().includes('radeon') ? 'AMD'
-            : out.toLowerCase().includes('intel') ? 'Intel' : 'unknown',
-    });
+    const parsed = parseVaapiOutput(out, dev);
+    if (parsed) devices.push(parsed);
   }
   return devices;
 }
@@ -68,15 +88,19 @@ async function detectAll(force = false) {
 
   const encoders = [...encoderSet];
   const presets = [];
+  const hevcVaapi = vaapi.filter(device => device.encoders.includes('hevc_vaapi'));
+  const av1Vaapi = vaapi.filter(device => device.encoders.includes('av1_vaapi'));
 
   // Multi-GPU group presets
   if (nvidia.length > 1) {
     if (encoderSet.has('hevc_nvenc')) presets.push({ id: 'nvidia_h265', label: `H.265 NVENC — Auto (${nvidia.length} GPUs)`, encoder: 'hevc_nvenc', codec: 'h265', type: 'nvidia_group', gpuCount: nvidia.length, device: `${nvidia.length} GPUs` });
     if (encoderSet.has('av1_nvenc'))  presets.push({ id: 'nvidia_av1',  label: `AV1 NVENC — Auto (${nvidia.length} GPUs)`,  encoder: 'av1_nvenc',  codec: 'av1',  type: 'nvidia_group', gpuCount: nvidia.length, device: `${nvidia.length} GPUs` });
   }
-  if (vaapi.length > 1) {
-    if (encoderSet.has('hevc_vaapi')) presets.push({ id: 'vaapi_h265', label: `H.265 VA-API — Auto (${vaapi.length} devices)`, encoder: 'hevc_vaapi', codec: 'h265', type: 'vaapi_group', deviceCount: vaapi.length, device: `${vaapi.length} VA-API` });
-    if (encoderSet.has('av1_vaapi'))  presets.push({ id: 'vaapi_av1',  label: `AV1 VA-API — Auto (${vaapi.length} devices)`,  encoder: 'av1_vaapi',  codec: 'av1',  type: 'vaapi_group', deviceCount: vaapi.length, device: `${vaapi.length} VA-API` });
+  if (hevcVaapi.length > 1 && encoderSet.has('hevc_vaapi')) {
+    presets.push({ id: 'vaapi_h265', label: `H.265 VA-API — Auto (${hevcVaapi.length} devices)`, encoder: 'hevc_vaapi', codec: 'h265', type: 'vaapi_group', deviceCount: hevcVaapi.length, renderDevices: hevcVaapi.map(d => d.device), device: `${hevcVaapi.length} VA-API` });
+  }
+  if (av1Vaapi.length > 1 && encoderSet.has('av1_vaapi')) {
+    presets.push({ id: 'vaapi_av1', label: `AV1 VA-API — Auto (${av1Vaapi.length} devices)`, encoder: 'av1_vaapi', codec: 'av1', type: 'vaapi_group', deviceCount: av1Vaapi.length, renderDevices: av1Vaapi.map(d => d.device), device: `${av1Vaapi.length} VA-API` });
   }
 
   // Per-GPU NVIDIA presets
@@ -87,14 +111,14 @@ async function detectAll(force = false) {
 
   // VA-API presets
   for (const dev of vaapi) {
-    if (encoderSet.has('hevc_vaapi')) presets.push({ id: `vaapi_h265_${dev.device.replace(/\//g, '_')}`, label: `H.265 VA-API — ${dev.vendor} (${dev.device})`, encoder: 'hevc_vaapi', codec: 'h265', type: 'vaapi', renderDevice: dev.device, device: `${dev.vendor} ${dev.device}` });
-    if (encoderSet.has('av1_vaapi'))  presets.push({ id: `vaapi_av1_${dev.device.replace(/\//g, '_')}`,  label: `AV1 VA-API — ${dev.vendor} (${dev.device})`,  encoder: 'av1_vaapi',  codec: 'av1',  type: 'vaapi', renderDevice: dev.device, device: `${dev.vendor} ${dev.device}` });
+    if (dev.encoders.includes('hevc_vaapi') && encoderSet.has('hevc_vaapi')) presets.push({ id: `vaapi_h265_${dev.device.replace(/\//g, '_')}`, label: `H.265 VA-API — ${dev.vendor} (${dev.device})`, encoder: 'hevc_vaapi', codec: 'h265', type: 'vaapi', renderDevice: dev.device, device: `${dev.vendor} ${dev.device}` });
+    if (dev.encoders.includes('av1_vaapi') && encoderSet.has('av1_vaapi'))  presets.push({ id: `vaapi_av1_${dev.device.replace(/\//g, '_')}`,  label: `AV1 VA-API — ${dev.vendor} (${dev.device})`,  encoder: 'av1_vaapi',  codec: 'av1', type: 'vaapi', renderDevice: dev.device, device: `${dev.vendor} ${dev.device}` });
   }
 
-  // Intel QSV — only if a render device exists (iGPU / dGPU)
-  const hasRenderDev = await run('ls', ['/dev/dri/'], 3000).then(o => o.includes('renderD'));
-  if (hasRenderDev && encoderSet.has('hevc_qsv')) presets.push({ id: 'qsv_h265', label: 'H.265 Intel QSV', encoder: 'hevc_qsv', codec: 'h265', type: 'qsv' });
-  if (hasRenderDev && encoderSet.has('av1_qsv'))  presets.push({ id: 'qsv_av1',  label: 'AV1 Intel QSV',   encoder: 'av1_qsv',  codec: 'av1',  type: 'qsv' });
+  // Intel QSV — only when an Intel render node was actually detected.
+  const hasIntelRenderDevice = vaapi.some(device => device.vendor === 'Intel');
+  if (hasIntelRenderDevice && encoderSet.has('hevc_qsv')) presets.push({ id: 'qsv_h265', label: 'H.265 Intel QSV', encoder: 'hevc_qsv', codec: 'h265', type: 'qsv' });
+  if (hasIntelRenderDevice && encoderSet.has('av1_qsv'))  presets.push({ id: 'qsv_av1',  label: 'AV1 Intel QSV',   encoder: 'av1_qsv',  codec: 'av1',  type: 'qsv' });
 
   // CPU fallbacks
   if (encoderSet.has('libx265'))   presets.push({ id: 'cpu_h265', label: 'H.265 CPU (libx265)', encoder: 'libx265',   codec: 'h265', type: 'cpu' });
@@ -109,4 +133,4 @@ async function detectAll(force = false) {
   return _cache;
 }
 
-module.exports = { detectAll, detectNvidia, detectVaapi, detectFfmpegEncoders };
+module.exports = { detectAll, detectNvidia, detectVaapi, detectFfmpegEncoders, parseVaapiOutput };

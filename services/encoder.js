@@ -13,7 +13,7 @@
  */
 'use strict';
 
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const path = require('path');
 const fs = require('fs');
@@ -26,6 +26,16 @@ const ffmpegArgs = require('./ffmpeg-args');
 const webhook = require('./webhook');
 
 const execFileAsync = promisify(execFile);
+
+function findProcessIds(pattern) {
+  try {
+    return execFileSync('pgrep', ['-f', pattern], {
+      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().split('\n').filter(pid => /^\d+$/.test(pid));
+  } catch {
+    return [];
+  }
+}
 
 const ENCODE_DIR = process.env.ENCODE_DIR || path.join(__dirname, '..', 'data', 'encoded');
 const LOG_DIR = path.join(__dirname, '..', 'data', 'logs');
@@ -134,10 +144,11 @@ function pickNvidiaGpu(preset) {
 }
 
 function pickVaapiDevice(preset) {
-  const count = preset.deviceCount || 1;
-  let best = '/dev/dri/renderD128', bestLoad = Infinity;
-  for (let i = 0; i < count; i++) {
-    const d = `/dev/dri/renderD${128 + i}`;
+  const devices = Array.isArray(preset.renderDevices) && preset.renderDevices.length
+    ? preset.renderDevices
+    : Array.from({ length: preset.deviceCount || 1 }, (_, i) => `/dev/dri/renderD${128 + i}`);
+  let best = devices[0], bestLoad = Infinity;
+  for (const d of devices) {
     const l = deviceLoad(`vaapi_${d}`);
     if (l < bestLoad) { best = d; bestLoad = l; }
   }
@@ -264,8 +275,9 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
           jobLog.error(`ENOENT diagnostic — expected: ${base}`);
           jobLog.error(`ENOENT diagnostic — dir ${dir} contains ${files.length} file(s), nearby matches: ${nearby.length > 0 ? nearby.join(', ') : '(none)'}`);
           // Check disk space
-          const { execSync } = require('child_process');
-          const df = execSync(`df -h "${dir}" 2>/dev/null || true`).toString().trim();
+          const df = execFileSync('df', ['-h', dir], {
+            encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+          }).trim();
           jobLog.error(`ENOENT diagnostic — disk space:\n${df}`);
         } catch (diagErr) {
           jobLog.error(`ENOENT diagnostic failed: ${diagErr.message}`);
@@ -1161,13 +1173,12 @@ async function processQueue() {
 async function recoverStalledJobs() {
   // Kill orphan ffmpeg processes from previous instance (PM2 restart, crash, etc.)
   try {
-    const { execSync } = require('child_process');
-    const pids = execSync("pgrep -f 'ffmpeg.*\\.tmp\\.' 2>/dev/null || true").toString().trim();
-    if (pids) {
-      for (const pid of pids.split('\n').filter(Boolean)) {
+    const pids = findProcessIds('ffmpeg.*\\.tmp\\.');
+    if (pids.length) {
+      for (const pid of pids) {
         try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* process already exited */ }
       }
-      logger.warn('encoder', `Killed ${pids.split('\n').filter(Boolean).length} orphan ffmpeg process(es) from previous instance`);
+      logger.warn('encoder', `Killed ${pids.length} orphan ffmpeg process(es) from previous instance`);
     }
   } catch { /* non-critical */ }
 
@@ -1395,10 +1406,9 @@ async function forceKillJob(jobId) {
   // Also try to kill by PID pattern (orphan ffmpeg for this job)
   let orphansKilled = 0;
   try {
-    const { execSync } = require('child_process');
-    const pids = execSync(`pgrep -f 'ffmpeg.*\\.tmp\\.${jobId}\\.' 2>/dev/null || true`).toString().trim();
-    if (pids) {
-      for (const pid of pids.split('\n').filter(Boolean)) {
+    const pids = findProcessIds(`ffmpeg.*\\.tmp\\.${jobId}\\.`);
+    if (pids.length) {
+      for (const pid of pids) {
         try { process.kill(parseInt(pid, 10), 'SIGKILL'); orphansKilled++; } catch { /* process already exited */ }
       }
       logger.warn('encoder', `Force-killed ${orphansKilled} orphan ffmpeg process(es) for job #${jobId}`);
