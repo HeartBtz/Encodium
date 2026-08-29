@@ -21,10 +21,12 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const { getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb, getPool } = require('./db');
 require('dotenv').config({ override: true });
 
 const logger = require('./services/logger');
+const ffprobe = require('./services/ffprobe');
 
 // Legacy MEDIA_DIR kept for backwards compat (initial migration seed)
 const LEGACY_MEDIA_DIR = process.env.MEDIA_DIR || path.join(__dirname, 'data', 'media');
@@ -32,9 +34,6 @@ const VIDEO_EXTS = new Set(['.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.f
 const THUMB_DIR  = process.env.THUMB_DIR || path.join(__dirname, 'data', 'thumbs');
 
 if (!fs.existsSync(THUMB_DIR)) fs.mkdirSync(THUMB_DIR, { recursive: true });
-
-let ffmpeg;
-try { ffmpeg = require('fluent-ffmpeg'); } catch { ffmpeg = null; }
 
 /* ── Scan state ──────────────────────────────────────────── */
 let scanProgress = {
@@ -70,25 +69,33 @@ function parseFraction(str) {
   return Math.round((parts[0] / parts[1]) * 100) / 100;
 }
 
-function getVideoMeta(filePath) {
-  return new Promise((resolve) => {
-    if (!ffmpeg) return resolve(null);
-    ffmpeg.ffprobe(filePath, (err, meta) => {
-      if (err || !meta) return resolve(null);
-      const video = meta.streams?.find(s => s.codec_type === 'video');
-      const audio = meta.streams?.find(s => s.codec_type === 'audio');
-      resolve({
-        duration:        meta.format?.duration        ? Number(meta.format.duration)                      : null,
-        codec:           video?.codec_name            || null,
-        width:           video?.width                 || null,
-        height:          video?.height                || null,
-        bitrate:         meta.format?.bit_rate        ? Math.round(Number(meta.format.bit_rate) / 1000)   : null,
-        fps:             parseFraction(video?.avg_frame_rate),
-        audioCodec:      audio?.codec_name            || null,
-        audioSampleRate: audio?.sample_rate           ? Number(audio.sample_rate) : null,
-        audioChannels:   audio?.channels              || null,
-      });
-    });
+async function getVideoMeta(filePath) {
+  const meta = await ffprobe.fullInfo(filePath);
+  if (!meta) return null;
+  const video = meta.streams?.find(s => s.codec_type === 'video');
+  const audio = meta.streams?.find(s => s.codec_type === 'audio');
+  return {
+    duration:        meta.format?.duration        ? Number(meta.format.duration)                    : null,
+    codec:           video?.codec_name            || null,
+    width:           video?.width                 || null,
+    height:          video?.height                || null,
+    bitrate:         meta.format?.bit_rate        ? Math.round(Number(meta.format.bit_rate) / 1000) : null,
+    fps:             parseFraction(video?.avg_frame_rate),
+    audioCodec:      audio?.codec_name            || null,
+    audioSampleRate: audio?.sample_rate           ? Number(audio.sample_rate) : null,
+    audioChannels:   audio?.channels              || null,
+  };
+}
+
+function runThumbnailFfmpeg(filePath, thumbPath, seekSeconds) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-ss', String(seekSeconds), '-i', filePath,
+      '-frames:v', '1', '-vf', 'scale=320:-2', '-q:v', '3', thumbPath,
+    ], { stdio: ['ignore', 'ignore', 'ignore'] });
+    child.once('error', reject);
+    child.once('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg thumbnail exited with ${code}`)));
   });
 }
 
@@ -106,21 +113,27 @@ function _runNextThumb() {
 }
 
 function generateThumb(filePath, videoId) {
-  if (!ffmpeg) return Promise.resolve(null);
   const thumbName = `v_${videoId}.jpg`;
   const thumbPath = path.join(THUMB_DIR, thumbName);
   if (fs.existsSync(thumbPath)) return Promise.resolve(thumbPath);
   if (thumbGenerating.has(thumbPath)) return thumbGenerating.get(thumbPath);
 
   const p = new Promise((resolve) => {
-    function doGenerate() {
+    async function doGenerate() {
       thumbActive++;
       try {
-        ffmpeg(filePath)
-          .on('error', () => { thumbActive--; thumbGenerating.delete(thumbPath); resolve(null); _runNextThumb(); })
-          .on('end',   () => { thumbActive--; thumbGenerating.delete(thumbPath); resolve(thumbPath); _runNextThumb(); })
-          .screenshots({ count: 1, timemarks: ['10%'], folder: THUMB_DIR, filename: thumbName, size: '320x?' });
-      } catch { thumbActive--; thumbGenerating.delete(thumbPath); resolve(null); _runNextThumb(); }
+        const duration = await ffprobe.duration(filePath);
+        const seekSeconds = duration > 0 ? Math.max(0, duration * 0.1) : 0;
+        await runThumbnailFfmpeg(filePath, thumbPath, seekSeconds);
+        resolve(thumbPath);
+      } catch {
+        try { await fs.promises.unlink(thumbPath); } catch { /* no partial thumbnail */ }
+        resolve(null);
+      } finally {
+        thumbActive--;
+        thumbGenerating.delete(thumbPath);
+        _runNextThumb();
+      }
     }
     if (thumbActive < THUMB_MAX_CONCURRENT) {
       doGenerate();
@@ -343,7 +356,6 @@ async function scanDirectory(onProgress = null) {
 
 /* ── Post-scan: enrich metadata with ffprobe ─────────────── */
 async function enrichVideoMeta(concurrency = 3) {
-  if (!ffmpeg) return;
   if (enrichProgress.running) { logger.warn('enrich', 'Enrichment already in progress'); return; }
   try {
     const pool = getPool();

@@ -5,8 +5,11 @@
 ;(function () {
   'use strict';
 
+  i18n.init();
+
   /* ── State ────────────────────────────────────────────── */
-  let token = localStorage.getItem('enc_token') || '';
+  let authenticated = false;
+  localStorage.removeItem('enc_token'); // migrate away from URL/localStorage JWTs
   let currentUser = null;
   let sse = null;
 
@@ -169,8 +172,7 @@
     }
 
     const headers = { 'Content-Type': 'application/json' };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    return fetch(`/api${path}`, { ...opts, headers })
+    return fetch(`/api${path}`, { ...opts, headers, credentials: 'same-origin' })
       .then(async r => {
         const ms = Math.round(performance.now() - t0);
         _activeRequests--;
@@ -298,13 +300,9 @@
 
   /* ── Auth ──────────────────────────────────────────────── */
   function initAuth() {
-    if (token) {
-      api('/auth/me')
-        .then(u => { currentUser = u; showApp(); })
-        .catch(() => { token = ''; localStorage.removeItem('enc_token'); showLogin(); });
-    } else {
-      showLogin();
-    }
+    api('/auth/me')
+      .then(u => { authenticated = true; currentUser = u; showApp(); })
+      .catch(() => { authenticated = false; showLogin(); });
   }
 
   function showLogin() {
@@ -352,9 +350,9 @@
   }
 
   function logout() {
-    token = '';
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    authenticated = false;
     currentUser = null;
-    localStorage.removeItem('enc_token');
     if (sse) { sse.close(); sse = null; }
     stopQueuePoll();
     showLogin();
@@ -372,8 +370,7 @@
           password: $('#login-pass').value,
         }),
       });
-      token = data.token;
-      localStorage.setItem('enc_token', token);
+      authenticated = true;
       currentUser = data.user;
       showApp();
     } catch (err) {
@@ -388,9 +385,9 @@
   let sseRetries = 0;
   function connectSSE() {
     if (sse) sse.close();
-    if (!token) return;
+    if (!authenticated) return;
     console.info(`[SSE] Connecting… (attempt ${sseRetries + 1})`);
-    sse = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
+    sse = new EventSource('/api/events');
     sse.addEventListener('connected', () => {
       console.info(`[SSE] ✓ Connected (after ${sseRetries} retries)`);
       _logNet({ time: _ts(), method: 'SSE', path: '/events', status: 'OPEN', duration: 0 });
@@ -435,7 +432,7 @@
         return;
       }
 
-      if (token && sseRetries < 10) {
+      if (authenticated && sseRetries < 10) {
         const delay = Math.min(sseRetries * 3000, 30000);
         console.info(`[SSE] Reconnecting in ${delay / 1000}s (retry ${sseRetries}/10)…`);
         setTimeout(() => connectSSE(), delay);
@@ -717,7 +714,7 @@
           <div class="mb-card-thumb" id="thumb-wrap-${v.id}">
             <div class="mb-thumb-spinner"></div>
             <img data-thumb-id="${v.id}"
-                 src="/api/thumb/${v.id}?token=${encodeURIComponent(token)}"
+                 src="/api/thumb/${v.id}"
                  loading="lazy">
             <button class="mb-play-btn" data-vid="${v.id}" data-fname="${escHtml(v.filename)}" title="${escHtml(t('lib.play'))}">▶</button>
           </div>
@@ -750,7 +747,7 @@
         if (retries < 2) {
           retries++;
           setTimeout(() => {
-            img.src = `/api/thumb/${vid}?token=${encodeURIComponent(token)}&t=${Date.now()}`;
+            img.src = `/api/thumb/${vid}?t=${Date.now()}`;
           }, 4000 * retries);
         } else {
           img.src = '/img/no-thumb.svg';
@@ -1046,19 +1043,21 @@
             </div>`;
           })() : ''}
           <div class="enc-job-actions">
-            ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('up',${j.id})" title="${escHtml(t('queue.priority_up'))}">⬆</button><button class="btn btn-xs btn-ghost" onclick="encAction('down',${j.id})" title="${escHtml(t('queue.priority_down'))}">⬇</button><button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})">✕</button>` : ''}
-            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-danger" onclick="encAction('cancel',${j.id})" title="${t('queue.cancel_job')}">✕</button><button class="btn btn-xs btn-ghost" onclick="encAction('force-kill',${j.id})" title="${t('queue.force_kill')}">💀</button>` : ''}
-            ${j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-primary" onclick="encAction('retry',${j.id})">↻</button>` : ''}
-            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="${escHtml(t('queue.view_log'))}">📋</button>` : ''}
-            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('log',${j.id})" title="${escHtml(t('queue.view_log'))}">📋</button>` : ''}
-            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" onclick="encAction('delete',${j.id})">🗑</button>` : ''}
+            ${j.status === 'pending' ? `<button class="btn btn-xs btn-ghost" data-enc-action="up" data-job-id="${j.id}" title="${escHtml(t('queue.priority_up'))}">⬆</button><button class="btn btn-xs btn-ghost" data-enc-action="down" data-job-id="${j.id}" title="${escHtml(t('queue.priority_down'))}">⬇</button><button class="btn btn-xs btn-danger" data-enc-action="cancel" data-job-id="${j.id}">✕</button>` : ''}
+            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-danger" data-enc-action="cancel" data-job-id="${j.id}" title="${escHtml(t('queue.cancel_job'))}">✕</button><button class="btn btn-xs btn-ghost" data-enc-action="force-kill" data-job-id="${j.id}" title="${escHtml(t('queue.force_kill'))}">💀</button>` : ''}
+            ${j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-primary" data-enc-action="retry" data-job-id="${j.id}">↻</button>` : ''}
+            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" data-enc-action="log" data-job-id="${j.id}" title="${escHtml(t('queue.view_log'))}">📋</button>` : ''}
+            ${j.status === 'encoding' ? `<button class="btn btn-xs btn-ghost" data-enc-action="log" data-job-id="${j.id}" title="${escHtml(t('queue.view_log'))}">📋</button>` : ''}
+            ${j.status === 'done' || j.status === 'error' || j.status === 'cancelled' ? `<button class="btn btn-xs btn-ghost" data-enc-action="delete" data-job-id="${j.id}">🗑</button>` : ''}
           </div>
         </div>`;
     }).join('');
+    $$('[data-enc-action]', list).forEach(button => {
+      button.addEventListener('click', () => encAction(button.dataset.encAction, Number(button.dataset.jobId)));
+    });
   }
 
-  // Expose for onclick
-  window.encAction = async function (act, id) {
+  async function encAction(act, id) {
     try {
       if (act === 'cancel') await api(`/encode/cancel/${id}`, { method: 'POST' });
       else if (act === 'force-kill') {
@@ -1072,12 +1071,11 @@
       else if (act === 'log') { showJobLog(id); return; }
       loadEncodeQueue();
     } catch (e) { toast(e.message, 'error'); }
-  };
+  }
 
   async function showJobLog(jobId) {
     try {
-      const headers = { 'Authorization': `Bearer ${token}` };
-      const res = await fetch(`/api/encode/job/${jobId}/log`, { headers });
+      const res = await fetch(`/api/encode/job/${jobId}/log`, { credentials: 'same-origin' });
       if (!res.ok) { toast(t('toast.log_unavailable'), 'warn'); return; }
       const text = await res.text();
       const modal = document.getElementById('log-modal') || createLogModal();
@@ -1093,9 +1091,10 @@
     modal.className = 'modal-overlay';
     modal.innerHTML = `
       <div class="modal" style="max-width:900px;width:90vw">
-        <div class="modal-header"><h3 class="log-modal-title">Log</h3><button class="modal-close" onclick="document.getElementById('log-modal').style.display='none'">✕</button></div>
+        <div class="modal-header"><h3 class="log-modal-title">Log</h3><button class="modal-close" data-close-log-modal>✕</button></div>
         <div class="modal-body"><pre class="log-modal-content" style="max-height:60vh;overflow:auto;font-size:11px;background:var(--a-surface2);padding:12px;border-radius:6px;white-space:pre-wrap;word-break:break-all;color:var(--a-text-muted)"></pre></div>
       </div>`;
+    modal.querySelector('[data-close-log-modal]').addEventListener('click', () => { modal.style.display = 'none'; });
     document.body.appendChild(modal);
     return modal;
   }
@@ -1208,7 +1207,7 @@
     const player = $('#video-player');
     const modal = $('#player-modal');
     $('#player-title').textContent = filename || t('player.title');
-    player.src = `/api/stream/${videoId}?token=${encodeURIComponent(token)}`;
+    player.src = `/api/stream/${videoId}`;
     modal.style.display = '';
     player.play().catch(() => {});
   }
@@ -1291,6 +1290,10 @@
   // Encode panel toggle
   const encPanelToggle = $('#encode-panel-toggle');
   if (encPanelToggle) {
+    for (const id of ['worker-count', 'btn-set-workers', 'btn-pause-queue', 'btn-cancel-all', 'btn-clear-queue']) {
+      const control = $(`#${id}`);
+      if (control) control.addEventListener('click', event => event.stopPropagation());
+    }
     encPanelToggle.addEventListener('click', () => {
       const body = $('#encode-panel-body');
       body.style.display = body.style.display === 'none' ? '' : 'none';
@@ -1400,7 +1403,8 @@
     try {
       const notif = await api('/settings/notifications');
       $('#webhook-enabled').checked = notif.enabled;
-      $('#webhook-url').value = notif.url || '';
+      $('#webhook-url').value = '';
+      $('#webhook-url').placeholder = notif.configured ? 'Webhook configuré — saisir une URL pour le remplacer' : 'https://…';
     } catch { /* non-critical */ }
     // Auto-scan interval
     try {
@@ -1443,12 +1447,12 @@
 
   $('#btn-save-webhook').addEventListener('click', async () => {
     try {
+      const webhookBody = { enabled: $('#webhook-enabled').checked };
+      const newWebhookUrl = $('#webhook-url').value.trim();
+      if (newWebhookUrl) webhookBody.url = newWebhookUrl;
       await api('/settings/notifications', {
         method: 'POST',
-        body: JSON.stringify({
-          enabled: $('#webhook-enabled').checked,
-          url: $('#webhook-url').value,
-        }),
+        body: JSON.stringify(webhookBody),
       });
       toast(t('toast.webhook_saved'), 'success');
     } catch (e) { toast(e.message, 'error'); }
@@ -1472,12 +1476,15 @@
             <div class="source-path">${escHtml(s.path)}</div>
             ${s.label ? `<div class="source-label">${escHtml(s.label)}</div>` : ''}
           </div>
-          <button class="btn btn-xs btn-danger" onclick="removeSource(${s.id})" title="${t('settings.sources_remove')}">🗑</button>
+          <button class="btn btn-xs btn-danger" data-remove-source="${s.id}" title="${escHtml(t('settings.sources_remove'))}">🗑</button>
         </div>`).join('');
+      $$('[data-remove-source]', list).forEach(button => {
+        button.addEventListener('click', () => removeSource(Number(button.dataset.removeSource)));
+      });
     } catch (e) { toast(t('error.generic', { msg: e.message }), 'error'); }
   }
 
-  window.removeSource = async function(id) {
+  async function removeSource(id) {
     if (!confirm(t('settings.sources_confirm_remove'))) return;
     try {
       await api(`/settings/sources/${id}`, { method: 'DELETE' });
@@ -1485,7 +1492,7 @@
       loadSources();
       loadDashboard();
     } catch (e) { toast(e.message, 'error'); }
-  };
+  }
 
   /* ── File Browser Modal ─────────────────────────────────── */
   let browsePath = '/';
@@ -1592,19 +1599,22 @@
             <div class="enc-job-meta">${p.codec.toUpperCase()} · CQ ${p.cq} · ${p.container || 'auto'} ${p.downscale ? '· ' + p.downscale + 'p' : ''} ${p.tonemap ? '· HDR→SDR' : ''}</div>
           </div>
           <div class="enc-job-actions">
-            <button class="btn btn-xs btn-danger" onclick="deleteCustomPreset(${p.id})">🗑</button>
+            <button class="btn btn-xs btn-danger" data-delete-preset="${p.id}">🗑</button>
           </div>
         </div>`).join('');
+      $$('[data-delete-preset]', list).forEach(button => {
+        button.addEventListener('click', () => deleteCustomPreset(Number(button.dataset.deletePreset)));
+      });
     } catch { /* non-critical */ }
   }
 
-  window.deleteCustomPreset = async function(id) {
+  async function deleteCustomPreset(id) {
     try {
       await api(`/custom-presets/${id}`, { method: 'DELETE' });
       toast(t('toast.preset_deleted'), 'success');
       loadCustomPresets();
     } catch (e) { toast(e.message, 'error'); }
-  };
+  }
 
   $('#btn-save-custom-preset').addEventListener('click', async () => {
     const name = $('#cp-name').value.trim();

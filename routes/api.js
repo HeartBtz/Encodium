@@ -17,7 +17,11 @@ const gpuDetect  = require('../services/gpu-detect');
 const encoder    = require('../services/encoder');
 const logger     = require('../services/logger');
 const { mimeForExt } = require('../services/ffmpeg-args');
-const { signToken, verifyToken, requireAuth, requireAdmin } = require('../middleware/auth');
+const { parseByteRange } = require('../services/http-range');
+const { resolvePublicWebhookUrl } = require('../services/network-security');
+const {
+  signToken, setSessionCookie, clearSessionCookie, requireAuth, requireAdmin,
+} = require('../middleware/auth');
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 /** Return a safe error message — hides internals in production */
@@ -85,6 +89,8 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many login attempts, please try again later' },
 });
 
+const dummyPasswordHash = bcrypt.hash('encodium-invalid-login-sentinel', 12);
+
 /* ─── :id param validation ────────────────────────────────── */
 router.param('id', (req, res, next, val) => {
   const n = Number(val);
@@ -100,21 +106,40 @@ router.param('id', (req, res, next, val) => {
 router.post('/auth/login', loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-    const user = await db.getUserByEmail(email);
-    if (!user) {
-      logger.warn('auth', `Login failed: unknown email "${email}"`);
-      return res.status(401).json({ error: 'Invalid credentials' });
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password || email.length > 255 || password.length > 1024) {
+      return res.status(400).json({ error: 'Valid email and password required' });
     }
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) {
-      logger.warn('auth', `Login failed: wrong password for "${email}"`);
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await db.getUserByEmail(normalizedEmail);
+    const ok = await bcrypt.compare(password, user ? user.password_hash : await dummyPasswordHash);
+    if (!user || !ok) {
+      logger.warn('auth', `Login failed for ${normalizedEmail.replace(/[\r\n\t]/g, '')}`);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     await db.updateLastLogin(user.id);
-    logger.info('auth', `Login success: ${email} (id=${user.id})`);
-    res.json({ token: signToken(user), user: { id: user.id, email: user.email, role: user.role } });
+    logger.info('auth', `Login success: ${normalizedEmail} (id=${user.id})`);
+    const token = signToken(user);
+    setSessionCookie(req, res, token);
+    const response = { user: { id: user.id, email: user.email, role: user.role } };
+    // Browser sessions use the HttpOnly cookie. Explicit API clients can opt
+    // into a bearer token without exposing it to the default web frontend.
+    if (process.env.AUTH_RETURN_BEARER_TOKEN === 'true') response.token = token;
+    res.json(response);
   } catch (e) { logger.error('auth', `Login error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }
+});
+
+router.post('/auth/logout', (req, res) => {
+  clearSessionCookie(req, res);
+  res.json({ ok: true });
+});
+
+router.get('/health', async (_req, res) => {
+  try {
+    await db.getPool().query('SELECT 1');
+    res.json({ status: 'ok' });
+  } catch {
+    res.status(503).json({ status: 'unavailable' });
+  }
 });
 
 router.get('/auth/me', requireAuth, async (req, res) => {
@@ -129,7 +154,7 @@ router.get('/auth/me', requireAuth, async (req, res) => {
    SCANNER
    ═══════════════════════════════════════════════════════════════ */
 
-router.post('/scan', requireAuth, async (req, res) => {
+router.post('/scan', requireAdmin, async (req, res) => {
   try {
     const state = scanner.getState();
     if (state.running) return res.status(409).json({ error: 'Scan already in progress' });
@@ -143,12 +168,12 @@ router.get('/scan/progress', requireAuth, (req, res) => {
   res.json(scanner.getState());
 });
 
-router.post('/scan/cancel', requireAuth, (req, res) => {
+router.post('/scan/cancel', requireAdmin, (req, res) => {
   scanner.cancelScan();
   res.json({ message: 'Scan cancelled' });
 });
 
-router.post('/sync', requireAuth, async (req, res) => {
+router.post('/sync', requireAdmin, async (req, res) => {
   try {
     const syncState = scanner.getSyncProgress();
     if (syncState.running) return res.status(409).json({ error: 'Sync already in progress' });
@@ -164,7 +189,7 @@ router.get('/sync/progress', requireAuth, (req, res) => {
   res.json(scanner.getSyncProgress());
 });
 
-router.post('/enrich', requireAuth, async (req, res) => {
+router.post('/enrich', requireAdmin, async (req, res) => {
   try {
     const enrichState = scanner.getEnrichProgress();
     if (enrichState.running) return res.status(409).json({ error: 'Enrichment already in progress' });
@@ -180,7 +205,7 @@ router.get('/enrich/progress', requireAuth, (req, res) => {
   res.json(scanner.getEnrichProgress());
 });
 
-router.post('/thumbs', requireAuth, async (req, res) => {
+router.post('/thumbs', requireAdmin, async (req, res) => {
   try {
     const thumbsState = scanner.getThumbsProgress();
     if (thumbsState.running) return res.status(409).json({ error: 'Thumbnail generation already in progress' });
@@ -338,11 +363,7 @@ router.get('/stats', requireAuth, async (req, res) => {
    THUMBNAILS
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/thumb/:id', async (req, res) => {
-  // Auth via query param (for <img> tags) or Bearer header
-  const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
-  try { verifyToken(tkn); } catch { return res.status(401).end(); }
-
+router.get('/thumb/:id', requireAuth, async (req, res) => {
   const id = req.params.id;
   const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${id}.jpg`);
 
@@ -380,11 +401,7 @@ router.get('/thumb/:id', async (req, res) => {
    VIDEO STREAMING
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/stream/:id', async (req, res) => {
-  // Token via query param for <video> tag
-  const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
-  try { verifyToken(tkn); } catch { return res.status(401).json({ error: 'Invalid token' }); }
-
+router.get('/stream/:id', requireAuth, async (req, res) => {
   try {
     const pool = db.getPool();
     const [rows] = await pool.query('SELECT file_path, size FROM videos WHERE id = ?', [req.params.id]);
@@ -401,10 +418,13 @@ router.get('/stream/:id', async (req, res) => {
     const mime = mimeForExt(path.extname(filePath));
     const range = req.headers.range;
     if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 5 * 1024 * 1024, fileSize - 1);
-      const chunkSize = end - start + 1;
+      let parsed;
+      try { parsed = parseByteRange(range, Number(fileSize)); }
+      catch {
+        res.set('Content-Range', `bytes */${fileSize}`);
+        return res.status(416).end();
+      }
+      const { start, end, length: chunkSize } = parsed;
 
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
@@ -412,14 +432,18 @@ router.get('/stream/:id', async (req, res) => {
         'Content-Length': chunkSize,
         'Content-Type': mime,
       });
-      fs.createReadStream(filePath, { start, end }).pipe(res);
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.on('error', () => res.destroy());
+      stream.pipe(res);
     } else {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': mime,
         'Accept-Ranges': 'bytes',
       });
-      fs.createReadStream(filePath).pipe(res);
+      const stream = fs.createReadStream(filePath);
+      stream.on('error', () => res.destroy());
+      stream.pipe(res);
     }
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
@@ -483,48 +507,48 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
   } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
-router.post('/encode/cancel/:id', requireAuth, (req, res) => {
+router.post('/encode/cancel/:id', requireAdmin, (req, res) => {
   const ok = encoder.cancelJob(parseInt(req.params.id, 10));
   res.json({ cancelled: ok });
 });
 
-router.post('/encode/cancel-all', requireAuth, async (req, res) => {
+router.post('/encode/cancel-all', requireAdmin, async (req, res) => {
   const n = await encoder.cancelAll();
   res.json({ cancelled: n });
 });
 
-router.post('/encode/force-kill/:id', requireAuth, async (req, res) => {
+router.post('/encode/force-kill/:id', requireAdmin, async (req, res) => {
   try {
     await encoder.forceKillJob(parseInt(req.params.id, 10));
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
-router.post('/encode/pause', requireAuth, (req, res) => {
+router.post('/encode/pause', requireAdmin, (req, res) => {
   const p = encoder.setPaused(true);
   res.json({ paused: p });
 });
 
-router.post('/encode/resume', requireAuth, (req, res) => {
+router.post('/encode/resume', requireAdmin, (req, res) => {
   const p = encoder.setPaused(false);
   res.json({ paused: p });
 });
 
-router.post('/encode/clear-finished', requireAuth, async (req, res) => {
+router.post('/encode/clear-finished', requireAdmin, async (req, res) => {
   try {
     const n = await encoder.clearFinished();
     res.json({ cleared: n });
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-router.post('/encode/retry/:id', requireAuth, async (req, res) => {
+router.post('/encode/retry/:id', requireAdmin, async (req, res) => {
   try {
     await encoder.retryJob(parseInt(req.params.id, 10));
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
-router.delete('/encode/job/:id', requireAuth, async (req, res) => {
+router.delete('/encode/job/:id', requireAdmin, async (req, res) => {
   try {
     await encoder.deleteJob(parseInt(req.params.id, 10));
     res.json({ ok: true });
@@ -539,7 +563,7 @@ router.post('/encode/workers', requireAdmin, (req, res) => {
 });
 
 /* Clear encode_skip flag for given video ids */
-router.post('/videos/clear-skip', requireAuth, async (req, res) => {
+router.post('/videos/clear-skip', requireAdmin, async (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
@@ -560,7 +584,7 @@ router.get('/encode/job/:id/log', requireAuth, async (req, res) => {
 });
 
 /* Job priority — set priority of a pending job */
-router.post('/encode/job/:id/priority', requireAuth, async (req, res) => {
+router.post('/encode/job/:id/priority', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const { priority } = req.body;
@@ -572,7 +596,7 @@ router.post('/encode/job/:id/priority', requireAuth, async (req, res) => {
 });
 
 /* Move job up/down in queue */
-router.post('/encode/job/:id/move', requireAuth, async (req, res) => {
+router.post('/encode/job/:id/move', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const { direction } = req.body; // 'up' or 'down'
@@ -583,12 +607,8 @@ router.post('/encode/job/:id/move', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-/* SSE stream for real-time updates (token via query param for EventSource) */
-router.get('/events', (req, res) => {
-  const tkn = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
-  try {
-    verifyToken(tkn);
-  } catch { return res.status(401).json({ error: 'Invalid token' }); }
+/* SSE stream for real-time updates (authenticated by HttpOnly session cookie) */
+router.get('/events', requireAuth, (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -605,7 +625,7 @@ router.get('/events', (req, res) => {
    LOGS — Recent logs endpoint
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/logs', requireAuth, (req, res) => {
+router.get('/logs', requireAdmin, (req, res) => {
   const limit = Math.min(500, parseInt(req.query.limit || '100', 10));
   const level = req.query.level || 'info';
   res.json(logger.getRecent(limit, level));
@@ -655,7 +675,7 @@ const ALLOWED_CONTAINERS = new Set(['auto', 'mkv', 'mp4']);
 // Downscale heights — must be a known target or empty
 const ALLOWED_DOWNSCALE = new Set(['', '480', '720', '1080', '1440', '2160']);
 
-router.post('/custom-presets', requireAuth, async (req, res) => {
+router.post('/custom-presets', requireAdmin, async (req, res) => {
   try {
     const { name, codec, cq, container, downscale, tonemap, extra_args } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
@@ -692,7 +712,7 @@ router.post('/custom-presets', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-router.delete('/custom-presets/:id', requireAuth, async (req, res) => {
+router.delete('/custom-presets/:id', requireAdmin, async (req, res) => {
   try {
     const pool = db.getPool();
     await pool.query('DELETE FROM custom_presets WHERE id=?', [req.params.id]);
@@ -713,7 +733,7 @@ router.get('/settings/schedule', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-router.post('/settings/schedule', requireAuth, async (req, res) => {
+router.post('/settings/schedule', requireAdmin, async (req, res) => {
   try {
     const { enabled, start, end } = req.body;
     if (enabled !== undefined) await db.setSetting('schedule_enabled', enabled ? '1' : '0');
@@ -728,35 +748,33 @@ router.post('/settings/schedule', requireAuth, async (req, res) => {
    SETTINGS — Notifications (webhooks)
    ═══════════════════════════════════════════════════════════════ */
 
-router.get('/settings/notifications', requireAuth, async (req, res) => {
+router.get('/settings/notifications', requireAdmin, async (req, res) => {
   try {
     const webhookUrl = await db.getSetting('webhook_url', '');
     const webhookEnabled = await db.getSetting('webhook_enabled', '0');
-    res.json({ enabled: webhookEnabled === '1', url: webhookUrl });
+    res.json({ enabled: webhookEnabled === '1', configured: !!webhookUrl });
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/settings/notifications', requireAdmin, async (req, res) => {
   try {
     const { enabled, url } = req.body;
-    if (enabled !== undefined) await db.setSetting('webhook_enabled', enabled ? '1' : '0');
+    let normalizedUrl;
     if (url !== undefined) {
       const trimmed = String(url).trim();
       if (trimmed) {
-        // Validate URL format and restrict to http(s) to prevent SSRF
-        let parsed;
-        try { parsed = new URL(trimmed); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
-        if (!['http:', 'https:'].includes(parsed.protocol)) {
-          return res.status(400).json({ error: 'Only http/https URLs allowed' });
-        }
-        // Block private/internal IPs
-        const host = parsed.hostname;
-        if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|fc|fd|fe80|localhost|::1|\[::1\]|\[fc|\[fd|\[fe80)/i.test(host)) {
-          return res.status(400).json({ error: 'Internal/private URLs are not allowed' });
-        }
+        try { normalizedUrl = (await resolvePublicWebhookUrl(trimmed)).url.toString(); }
+        catch (validationError) { return res.status(400).json({ error: validationError.message }); }
+      } else {
+        normalizedUrl = '';
       }
-      await db.setSetting('webhook_url', trimmed);
     }
+    if (enabled) {
+      const effectiveUrl = normalizedUrl !== undefined ? normalizedUrl : await db.getSetting('webhook_url', '');
+      if (!effectiveUrl) return res.status(400).json({ error: 'A webhook URL is required before enabling notifications' });
+    }
+    if (normalizedUrl !== undefined) await db.setSetting('webhook_url', normalizedUrl);
+    if (enabled !== undefined) await db.setSetting('webhook_enabled', enabled ? '1' : '0');
     logger.info('settings', `Webhook updated by ${req.user.email}: enabled=${enabled}, url=${url ? '(set)' : '(unchanged)'}`);
     res.json({ ok: true });
   } catch (e) { logger.error('settings', `Webhook save error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }

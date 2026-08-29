@@ -8,6 +8,7 @@
 
 const db = require('../db');
 const logger = require('./logger');
+const { resolvePublicWebhookUrl } = require('./network-security');
 
 /**
  * Check if queue is empty and fire webhook notification if configured.
@@ -38,16 +39,22 @@ async function checkAndFire() {
       ? { content: `✅ **Encodium** — Encoding queue completed\n🎬 ${summary.done || 0} succeeded · ❌ ${summary.errors || 0} error(s)` }
       : { event: 'queue_complete', done: summary.done || 0, errors: summary.errors || 0, total: summary.total || 0 };
 
-    const httpMod = webhookUrl.startsWith('https') ? require('https') : require('http');
+    // Resolve and validate again immediately before the request. The custom
+    // lookup pins this vetted address, preventing DNS rebinding between the
+    // settings validation and delivery.
+    const target = await resolvePublicWebhookUrl(webhookUrl);
+    const httpMod = target.url.protocol === 'https:' ? require('https') : require('http');
     const body = JSON.stringify(payload);
-    const url = new URL(webhookUrl);
+    const url = target.url;
     const options = {
-      hostname: url.hostname,
+      hostname: target.hostname,
       port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname + url.search,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
       timeout: 10000,
+      lookup: (_hostname, _options, callback) => callback(null, target.address, target.family),
+      servername: target.hostname,
     };
     const req = httpMod.request(options, () => {});
     req.on('timeout', () => { req.destroy(); logger.warn('encoder', 'Webhook request timed out'); });

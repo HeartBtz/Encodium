@@ -20,15 +20,39 @@ const { version } = require('./package.json');
 const PORT = parseInt(process.env.PORT || '4000', 10);
 const app  = express();
 
+const corsOrigins = String(process.env.CORS_ORIGINS || '')
+  .split(',').map(origin => origin.trim()).filter(Boolean);
+
 /* ─── Security & middleware ───────────────────────────────── */
 app.set('trust proxy', 1);
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      mediaSrc: ["'self'", 'blob:'],
+      connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      frameAncestors: ["'none'"],
+      // The services are also reachable over trusted LAN HTTP. Relative assets
+      // must not be rewritten to HTTPS when no TLS listener exists there.
+      upgradeInsecureRequests: null,
+    },
+  },
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: false,
-  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: { policy: 'same-origin' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
 }));
-app.use(cors());
+app.use(cors({
+  credentials: corsOrigins.length > 0,
+  origin(origin, callback) {
+    if (!origin || corsOrigins.includes(origin)) return callback(null, true);
+    return callback(null, false);
+  },
+}));
 app.use(express.json({ limit: '2mb' }));
 
 const apiLimiter = rateLimit({
@@ -44,6 +68,9 @@ const apiLimiter = rateLimit({
 });
 
 /* ─── Static files ────────────────────────────────────────── */
+app.get('/vendor/chart.umd.min.js', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'node_modules', 'chart.js', 'dist', 'chart.umd.min.js'));
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ─── API ─────────────────────────────────────────────────── */

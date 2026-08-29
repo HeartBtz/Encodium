@@ -10,3 +10,8 @@ data/thumbs/*.jpg
 install.sh
 ecosystem.config.js
 Screenshots/
+.gitlab-ci.yml
+deploy/
+scripts/
+tests/
+eslint.config.js

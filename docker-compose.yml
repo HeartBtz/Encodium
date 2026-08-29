@@ -4,14 +4,16 @@
 #
 #  Usage:
 #    docker compose up -d          # CPU only
-#    docker compose --profile gpu up -d   # With NVIDIA GPU
+#    docker compose --profile nvidia up -d   # With NVIDIA GPU
+#    docker compose --profile amd up -d      # With AMD/Intel VA-API
 #
 #  First run creates the admin account via CLI:
 #    docker compose exec encodium node cli.js useradd admin@example.com yourpassword
 #
 #  Required environment variables (.env or shell):
 #    DB_PASS        — database password (server refuses to start without it)
-#    JWT_SECRET     — strongly recommended (random ephemeral secret used if unset)
+#    DB_ROOT_PASS   — database root password
+#    JWT_SECRET     — required, at least 32 characters
 #
 
 services:
@@ -20,7 +22,7 @@ services:
     image: mariadb:11
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS:-encodium_root_secret}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS:?DB_ROOT_PASS is required}
       MARIADB_DATABASE: ${DB_NAME:-encodium}
       MARIADB_USER: ${DB_USER:-encodium}
       MARIADB_PASSWORD: ${DB_PASS:?DB_PASS is required}
@@ -49,7 +51,7 @@ services:
       DB_USER: ${DB_USER:-encodium}
       DB_PASS: ${DB_PASS:?DB_PASS is required}
       DB_NAME: ${DB_NAME:-encodium}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET (32+ characters) is required}
       PORT: 4000
       MEDIA_DIR: /media
       ENCODE_DIR: /app/data/encoded
@@ -61,13 +63,18 @@ services:
       - encodium_encoded:/app/data/encoded
       - encodium_thumbs:/app/data/thumbs
       - encodium_logs:/app/data/logs
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   # ── Encodium (NVIDIA GPU) ───────────────────────────────
-  # Activate with: docker compose --profile gpu up -d
+  # Activate with: docker compose --profile nvidia up -d
   # Requires: nvidia-container-toolkit installed on the host
   encodium-gpu:
     build: .
-    profiles: ["gpu"]
+    profiles: ["gpu", "nvidia"]
     restart: unless-stopped
     depends_on:
       db:
@@ -81,12 +88,15 @@ services:
       DB_USER: ${DB_USER:-encodium}
       DB_PASS: ${DB_PASS:?DB_PASS is required}
       DB_NAME: ${DB_NAME:-encodium}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET (32+ characters) is required}
       PORT: 4000
       MEDIA_DIR: /media
       ENCODE_DIR: /app/data/encoded
       MAX_WORKERS: ${MAX_WORKERS:-2}
       NVIDIA_VISIBLE_DEVICES: all
+    group_add:
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-107}"
     volumes:
       - ${MEDIA_DIR:-./data/media}:/media
       - encodium_encoded:/app/data/encoded
@@ -99,6 +109,50 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu, video]
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # ── Encodium (AMD/Intel VA-API) ──────────────────────────
+  # Activate with: docker compose --profile amd up -d
+  encodium-amd:
+    build: .
+    profiles: ["amd"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-encodium}
+      DB_PASS: ${DB_PASS:?DB_PASS is required}
+      DB_NAME: ${DB_NAME:-encodium}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET (32+ characters) is required}
+      PORT: 4000
+      MEDIA_DIR: /media
+      ENCODE_DIR: /app/data/encoded
+      MAX_WORKERS: ${MAX_WORKERS:-2}
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-107}"
+    volumes:
+      - ${MEDIA_DIR:-./data/media}:/media
+      - encodium_encoded:/app/data/encoded
+      - encodium_thumbs:/app/data/thumbs
+      - encodium_logs:/app/data/logs
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
   db_data:
