@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════════
 # Encodium — Fully Autonomous Installation Script
-# ONE command, ZERO manual steps.
+# Bootstrap only; existing installations require a reviewed update procedure.
 #   bash install.sh
 # Installs: Node.js, MariaDB, ffmpeg, npm deps, creates DB,
 # .env, admin account, and process manager (systemd or PM2).
@@ -47,6 +47,12 @@ banner() {
 # ─── Pre-flight checks ────────────────────────────────────
 preflight() {
   log "Running pre-flight checks…"
+
+  ((EUID != 0)) || die "Run as the intended non-root service user with sudo access, not root."
+  if [[ -e "$SCRIPT_DIR/.env" || -L "$SCRIPT_DIR/.env" ]]; then
+    die "Existing .env preserved. Use a reviewed update procedure, not install.sh."
+  fi
+  [[ -n "${ADMIN_PASS:-}" ]] || die "Provide ADMIN_PASS through the environment; it will not be printed."
 
   # Need curl for nvm install
   if ! command -v curl &>/dev/null; then
@@ -188,7 +194,8 @@ start_mariadb_manual() {
   local SOCKET_DIR="/run/mysqld"
   if [[ ! -d "$SOCKET_DIR" ]]; then
     sudo mkdir -p "$SOCKET_DIR"
-    sudo chown mysql:mysql "$SOCKET_DIR" 2>/dev/null || sudo chmod 777 "$SOCKET_DIR"
+    sudo chown mysql:mysql "$SOCKET_DIR"
+    sudo chmod 755 "$SOCKET_DIR"
   fi
 
   # Ensure datadir exists and is initialized
@@ -202,9 +209,10 @@ start_mariadb_manual() {
     fi
   fi
 
-  # Kill any stale process
-  sudo killall -q mariadbd mysqld 2>/dev/null || true
-  sleep 1
+  # A failed root probe is not proof that an existing database can be killed.
+  if pgrep -x mariadbd >/dev/null || pgrep -x mysqld >/dev/null; then
+    die "An existing database process needs operator diagnosis; refusing a second daemon."
+  fi
 
   # Start daemon in background
   if command -v mariadbd-safe &>/dev/null; then
@@ -289,7 +297,7 @@ create_dirs() {
 install_deps() {
   log "Installing Node.js dependencies…"
   cd "$SCRIPT_DIR"
-  npm install --production 2>&1 | tail -5
+  npm ci --omit=dev --ignore-scripts
   ok "Dependencies installed"
 }
 
@@ -433,11 +441,7 @@ create_admin() {
   export ADMIN_EMAIL="$ADMIN_EMAIL_EFFECTIVE"
   export ADMIN_PASS="$ADMIN_PASS_EFFECTIVE"
 
-  # Source .env vars
-  set -a
-  # shellcheck disable=SC1091
-  source "$SCRIPT_DIR/.env"
-  set +a
+  # db.js loads .env with dotenv. Never execute configuration as shell code.
 
   # Write a temp script in project dir (needs local modules)
   local TMPJS="$SCRIPT_DIR/.tmp-admin-setup.js"
@@ -518,13 +522,9 @@ setup_pm2() {
   # Stop previous instance if running
   pm2 delete "$APP_NAME" 2>/dev/null || true
 
-  # Kill anything already on our port (stale processes from previous install)
-  local STALE_PID
-  STALE_PID=$(sudo fuser "${APP_PORT}/tcp" 2>/dev/null | xargs) || true
-  if [[ -n "$STALE_PID" ]]; then
-    log "Killing stale process(es) on port $APP_PORT: $STALE_PID"
-    sudo kill -9 $STALE_PID 2>/dev/null || true
-    sleep 1
+  # Port ownership is not service ownership; never kill an unrelated listener.
+  if sudo fuser "${APP_PORT}/tcp" >/dev/null 2>&1; then
+    die "Port $APP_PORT is busy; inspect its owner before continuing."
   fi
 
   # ecosystem.config.js is shipped in the repo (updated via git pull).
@@ -596,13 +596,9 @@ setup_systemd() {
     log "Removed Encodium from PM2 (systemd will manage it)"
   fi
 
-  # Kill anything already on our port (stale processes from previous install)
-  local STALE_PID
-  STALE_PID=$(sudo fuser "${APP_PORT}/tcp" 2>/dev/null | xargs) || true
-  if [[ -n "$STALE_PID" ]]; then
-    log "Killing stale process(es) on port $APP_PORT: $STALE_PID"
-    sudo kill -9 $STALE_PID 2>/dev/null || true
-    sleep 1
+  # Port ownership is not service ownership; never kill an unrelated listener.
+  if sudo fuser "${APP_PORT}/tcp" >/dev/null 2>&1; then
+    die "Port $APP_PORT is busy; inspect its owner before continuing."
   fi
 
   local SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
@@ -721,7 +717,7 @@ main() {
   echo ""
   echo -e "  ${BOLD}URL${NC}      http://localhost:${APP_PORT}"
   if [[ "${INSTALL_ADMIN_STATUS:-}" == "created" ]]; then
-    echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / ${INSTALL_ADMIN_PASS}"
+    echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / (password supplied via ADMIN_PASS; not printed)"
   else
     echo -e "  ${BOLD}Login${NC}    ${INSTALL_ADMIN_EMAIL} / (existing password kept)"
   fi

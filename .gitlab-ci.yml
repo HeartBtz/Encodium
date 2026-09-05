@@ -1,7 +1,6 @@
 stages:
   - verify
   - package
-  - deploy
 
 default:
   interruptible: true
@@ -24,6 +23,7 @@ cache:
 verify:
   stage: verify
   script:
+    - bash ops-static-test.sh
     - npm ci --ignore-scripts
     - npm test
     - npm run lint
@@ -35,28 +35,10 @@ package-production:
     - verify
   script:
     - mkdir -p dist
-    - tar --exclude=.git --exclude=.env --exclude=data --exclude=node_modules --exclude=.npm --exclude=dist -czf "dist/encodium-${CI_COMMIT_SHA}.tgz" .
+    - git archive --format=tar.gz --output="dist/encodium-${CI_COMMIT_SHA}.tgz" HEAD
     - test -s "dist/encodium-${CI_COMMIT_SHA}.tgz"
   artifacts:
     name: "encodium-${CI_COMMIT_SHORT_SHA}"
     paths:
       - "dist/encodium-${CI_COMMIT_SHA}.tgz"
     expire_in: 14 days
-
-deploy-production:
-  stage: deploy
-  needs:
-    - package-production
-  interruptible: false
-  resource_group: encodium-production
-  environment:
-    name: production
-    url: http://192.168.1.111
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      when: manual
-    - when: never
-  script:
-    - test -r "$HOME/.ssh/encodium_deploy_ed25519"
-    - test -r "$HOME/.ssh/known_hosts"
-    - ssh -i "$HOME/.ssh/encodium_deploy_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes root@192.168.1.111 "deploy ${CI_COMMIT_SHA}" < "dist/encodium-${CI_COMMIT_SHA}.tgz"

@@ -24,22 +24,13 @@ const logger = require('./logger');
 const ffprobe = require('./ffprobe');
 const ffmpegArgs = require('./ffmpeg-args');
 const webhook = require('./webhook');
+const { resolveMediaPath, sameFile, moveFile } = require('./media-files');
 
 const execFileAsync = promisify(execFile);
 
-function findProcessIds(pattern) {
-  try {
-    return execFileSync('pgrep', ['-f', pattern], {
-      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim().split('\n').filter(pid => /^\d+$/.test(pid));
-  } catch {
-    return [];
-  }
-}
-
 const ENCODE_DIR = process.env.ENCODE_DIR || path.join(__dirname, '..', 'data', 'encoded');
 const LOG_DIR = path.join(__dirname, '..', 'data', 'logs');
-const MAX_WORKERS = parseInt(process.env.MAX_WORKERS || '2', 10);
+const MAX_WORKERS = Math.max(1, Math.min(8, parseInt(process.env.MAX_WORKERS || '2', 10) || 2));
 
 /* ─── SSE event bus ──────────────────────────────────────────── */
 const sseClients = new Set();
@@ -47,7 +38,12 @@ function addSSEClient(res) { sseClients.add(res); res.on('close', () => sseClien
 function removeSSEClient(res) { sseClients.delete(res); }
 function broadcast(event, data) {
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const c of sseClients) { try { c.write(msg); } catch { sseClients.delete(c); } }
+  for (const c of sseClients) {
+    try {
+      if (c.writableLength > 1024 * 1024) { c.destroy(); sseClients.delete(c); }
+      else c.write(msg);
+    } catch { sseClients.delete(c); }
+  }
 }
 
 /* ─── Throttled SSE progress (max once per 800ms per job) ────── */
@@ -96,8 +92,6 @@ let running = true;
 let paused = false;            // pause queue processing (no new jobs start)
 let workerCount = MAX_WORKERS;
 let _processing = false;
-let _processingTs = 0;          // timestamp when _processing was set
-const PROCESSING_TIMEOUT = 30000; // 30s safety valve
 let _watchdogTimer = null;
 let _stateBroadcastTimer = null;
 const MAX_SIGNAL_RETRIES = 3;     // max SIGKILL recovery attempts before marking error
@@ -177,47 +171,6 @@ function vaapiDeviceFor(preset, devKey) {
   return preset.renderDevice || pickVaapiDevice(preset);
 }
 
-/* ─── Safe cross-filesystem move ─────────────────────────────── */
-
-async function copyFileStream(src, dst) {
-  // Stream-based copy — works on all filesystem types (NFS, ZFS, overlayfs, etc.)
-  // Unlike fs.copyFile which uses copy_file_range and fails with EPERM on some mounts.
-  const { createReadStream, createWriteStream } = require('fs');
-  const srcStat = await fsp.stat(src);
-  await new Promise((resolve, reject) => {
-    const rd = createReadStream(src);
-    const wr = createWriteStream(dst);
-    rd.on('error', err => { wr.destroy(); reject(err); });
-    wr.on('error', reject);
-    wr.on('finish', resolve);
-    rd.pipe(wr);
-  });
-  // Integrity check: destination must exist and match source size exactly
-  let dstStat;
-  try { dstStat = await fsp.stat(dst); } catch (statErr) {
-    throw new Error(`Copy integrity check: destination not found after copy (${statErr.code}): ${dst}`);
-  }
-  if (dstStat.size !== srcStat.size) {
-    await fsp.unlink(dst).catch(() => {});
-    throw new Error(`Copy integrity check failed: src=${srcStat.size} bytes, dst=${dstStat.size} bytes — partial file removed`);
-  }
-}
-
-async function moveFile(src, dst, jobLog) {
-  const srcStat = await fsp.stat(src);
-  jobLog?.info(`moveFile: ${path.basename(src)} (${(srcStat.size / 1e6).toFixed(1)} MB) → ${dst}`);
-  try {
-    await fsp.rename(src, dst);
-    jobLog?.info(`moveFile: rename succeeded`);
-  } catch (e) {
-    if (e.code !== 'EXDEV') throw e;
-    jobLog?.info(`moveFile: cross-device (EXDEV), using stream copy`);
-    await copyFileStream(src, dst);
-    await fsp.unlink(src);
-    jobLog?.info(`moveFile: stream copy + source cleanup done`);
-  }
-}
-
 /* ─── Per-job log file ───────────────────────────────────────── */
 
 async function createJobLogger(jobId) {
@@ -295,10 +248,9 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
   jobLog.info(`Output codec: ${outCodec} (expected: ${expectedCodec})`);
   if (!outCodec) {
     errors.push('ffprobe could not read output video codec');
-  } else if (expectedCodec === 'av1' && outCodec !== 'av1') {
-    errors.push(`Unexpected output codec: ${outCodec} (expected av1)`);
-  } else if (expectedCodec === 'h265' && outCodec !== 'hevc') {
-    errors.push(`Unexpected output codec: ${outCodec} (expected hevc)`);
+  } else {
+    const expected = { av1: 'av1', h265: 'hevc', hevc: 'hevc', h264: 'h264', avc: 'h264' }[expectedCodec];
+    if (expected && outCodec !== expected) errors.push(`Unexpected output codec: ${outCodec} (expected ${expected})`);
   }
 
   // Check output duration
@@ -307,9 +259,9 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
   if (!outDuration || outDuration <= 0) {
     errors.push(`Output duration invalid: ${outDuration}`);
   } else if (inputDuration > 0) {
-    const ratio = outDuration / inputDuration;
-    if (ratio < 0.90) {
-      errors.push(`Output too short: ${outDuration.toFixed(1)}s vs input ${inputDuration.toFixed(1)}s (ratio: ${ratio.toFixed(2)})`);
+    const tolerance = Math.max(1, inputDuration * 0.001);
+    if (Math.abs(outDuration - inputDuration) > tolerance) {
+      errors.push(`Output duration mismatch: ${outDuration.toFixed(1)}s vs input ${inputDuration.toFixed(1)}s (tolerance: ${tolerance.toFixed(1)}s)`);
     }
   }
 
@@ -320,7 +272,7 @@ async function validateOutput(tmpFile, expectedCodec, inputDuration, jobLog) {
 async function refreshVideoMeta(videoId, filePath, jobLog) {
   try {
     const info = await ffprobe.fullInfo(filePath);
-    if (!info) { jobLog.warn('Could not re-probe output for metadata refresh'); return; }
+    if (!info) throw new Error('Could not re-probe output for metadata refresh');
 
     const vStream = (info.streams || []).find(s => s.codec_type === 'video');
     const aStream = (info.streams || []).find(s => s.codec_type === 'audio');
@@ -375,6 +327,7 @@ async function refreshVideoMeta(videoId, filePath, jobLog) {
     jobLog.info(`Video #${videoId} metadata refreshed: codec=${meta.codec}, ${meta.width}x${meta.height}, ${meta.duration?.toFixed(1)}s, ${meta.bitrate}kbps`);
   } catch (e) {
     jobLog.warn(`Failed to refresh video metadata: ${e.message}`);
+    throw e;
   }
 }
 
@@ -393,7 +346,7 @@ async function processJob(job) {
   let preset;
   try { preset = JSON.parse(job.preset_json); }
   catch { preset = null; }
-  if (!preset || typeof preset !== 'object' || !preset.encoder || !preset.codec) {
+  if (!preset || typeof preset !== 'object' || typeof preset.encoder !== 'string' || !preset.encoder || typeof preset.codec !== 'string' || !preset.codec) {
     const err = `Invalid/missing preset for job #${job.id} (preset_json=${String(job.preset_json).slice(0, 120)}). Marking as error.`;
     jobLog.error(err);
     try {
@@ -401,18 +354,27 @@ async function processJob(job) {
       broadcast('job_update', { id: job.id, status: 'error', error: 'Invalid preset configuration' });
     } catch (dbErr) {
       jobLog.error(`Failed to mark job as error: ${dbErr.message}`);
+    } finally {
+      if (job._preLockedDevKey) unlockDevice(job._preLockedDevKey);
+      active.delete(job.id);
+      await jobLog.close();
     }
     return;
   }
 
   // Parse encode options (container, downscale, tonemap)
   let encodeOpts = {};
-  try { if (job.encode_options) encodeOpts = JSON.parse(job.encode_options); } catch { /* use defaults */ }
+  try { if (job.encode_options) encodeOpts = JSON.parse(job.encode_options) || {}; } catch { /* use defaults */ }
 
   let devKey = job._preLockedDevKey || 'cpu';
   let tmpFile = null;
+  let tmpDir = null;
+  const checkCancelled = () => {
+    if (job._cancelled) throw new Error(job._forceKilled ? 'Force-killed by admin (SIGKILL)' : 'Cancelled by user');
+  };
 
   try {
+    checkCancelled();
     // Abort immediately if encoder is stopping (PM2 restart, graceful shutdown)
     if (!running) {
       jobLog.warn('Encoder is stopping — aborting job before start');
@@ -437,6 +399,7 @@ async function processJob(job) {
 
     // Verify input accessible
     try {
+      await resolveMediaPath(video.file_path);
       await fsp.access(video.file_path, fs.constants.R_OK);
     } catch {
       const err = `Input file not accessible: ${video.file_path}`;
@@ -445,6 +408,8 @@ async function processJob(job) {
       broadcast('job_update', { id: job.id, status: 'error', error: err });
       return;
     }
+    const inputStat = await fsp.stat(video.file_path);
+    video.size = inputStat.size;
 
     jobLog.info(`Preset: ${JSON.stringify(preset)}`);
 
@@ -500,6 +465,7 @@ async function processJob(job) {
 
     // ── Probe encoder capabilities ──
     const encCaps = await probeEncoderCaps(preset.encoder);
+    checkCancelled();
     jobLog.info(`Encoder caps (${preset.encoder}): ${JSON.stringify(encCaps)}`);
 
     // ── Build output path ──
@@ -516,8 +482,9 @@ async function processJob(job) {
     await fsp.mkdir(ENCODE_DIR, { recursive: true });
     const outFile = replaceOriginal
       ? path.join(ENCODE_DIR, `${baseName}_enc_${job.id}${ext}`)
-      : path.join(ENCODE_DIR, `${baseName}_${preset.codec}${ext}`);
-    tmpFile = outFile.replace(/(\.[^.]+)$/, `.tmp.${job.id}$1`);
+      : path.join(ENCODE_DIR, `${baseName}_${preset.codec}_${job.id}${ext}`);
+    tmpDir = await fsp.mkdtemp(path.join(ENCODE_DIR, `.job-${job.id}-`));
+    tmpFile = path.join(tmpDir, `output${ext}`);
 
     jobLog.info(`Output: ${outFile}`);
     jobLog.info(`Temp: ${tmpFile}`);
@@ -555,7 +522,7 @@ async function processJob(job) {
       validSecondaryVideoIndices: fullInfo ? (fullInfo.streams || [])
         .filter(s =>
           s.codec_type === 'video' &&
-          s.index > 0 &&                          // skip primary stream
+          s !== (fullInfo.streams || []).find(stream => stream.codec_type === 'video') &&
           s.width && s.height &&                  // must have dimensions
           s.pix_fmt && s.pix_fmt !== 'none'       // must have a known pixel format
         )
@@ -565,7 +532,7 @@ async function processJob(job) {
       badVideoIndices: fullInfo ? (fullInfo.streams || [])
         .filter(s =>
           s.codec_type === 'video' &&
-          s.index > 0 &&
+          s !== (fullInfo.streams || []).find(stream => stream.codec_type === 'video') &&
           (!s.width || !s.height || !s.pix_fmt || s.pix_fmt === 'none')
         )
         .map(s => s.index) : [],
@@ -591,8 +558,13 @@ async function processJob(job) {
       jobId: job.id, videoId: job.video_id, encoder: preset.encoder,
     });
 
+    // A cancellation/deletion may have changed the row while probing.
+    const [[claimed]] = await pool.query('SELECT status FROM encode_jobs WHERE id=?', [job.id]);
+    if (!claimed || claimed.status !== 'encoding') job._cancelled = true;
     // ── Execute ffmpeg with fallback ──
+    checkCancelled();
     const result = await runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobLog);
+    checkCancelled();
 
     if (result.cancelled) {
       await pool.query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=?", [job.id]);
@@ -650,6 +622,7 @@ async function processJob(job) {
         if (cpuBuild.actualOutFile !== tmpFile) tmpFile = cpuBuild.actualOutFile;
         jobLog.info(`CPU retry: ffmpeg ${cpuBuild.swArgs.join(' ')}`);
         const cpuResult = await runFfmpegWithFallback(job, video, null, cpuBuild.swArgs, tmpFile, undefined, jobLog);
+        checkCancelled();
         if (cpuResult.cancelled) {
           await pool.query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=?", [job.id]);
           broadcast('job_update', { id: job.id, status: 'cancelled' });
@@ -699,6 +672,7 @@ async function processJob(job) {
     // ── Validate output ──
     jobLog.info('--- Validating output ---');
     const validationErrors = await validateOutput(tmpFile, preset.codec, inputDuration, jobLog);
+    checkCancelled();
     if (validationErrors.length > 0) {
       const errMsg = `Output validation failed:\n${validationErrors.join('\n')}`;
       jobLog.error(errMsg);
@@ -742,10 +716,12 @@ async function processJob(job) {
       jobLog.info(`Target   : ${targetPath}`);
       jobLog.info(`Original : ${inFile} (${(video.size / 1e6).toFixed(1)} MB)`);
       try {
-        // Ensure destination directory exists (e.g. new season folder on NFS)
-        await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+        await resolveMediaPath(inFile);
+        if (!sameFile(inputStat, await fsp.lstat(inFile))) throw new Error('Original changed during encoding');
+        checkCancelled();
+        job._finalizing = true; // Commit point: cancellation can no longer safely undo publication.
         // Move encoded file to destination FIRST — original untouched until we confirm success
-        await moveFile(tmpFile, targetPath, jobLog);
+        await moveFile(tmpFile, targetPath, jobLog, targetPath === inFile ? inputStat : null);
         tmpFile = null; // file is now at targetPath — prevent finally from deleting it
         finalPath = targetPath;
         // Verify destination is intact before touching DB or original
@@ -756,6 +732,8 @@ async function processJob(job) {
         // Only delete the original AFTER DB is updated and destination is confirmed
         if (targetPath !== inFile) {
           try {
+            await resolveMediaPath(inFile);
+            if (!sameFile(inputStat, await fsp.lstat(inFile))) throw new Error('Original changed during encoding');
             await fsp.unlink(inFile);
             jobLog.info(`Original deleted: ${inFile}`);
           } catch (unlinkErr) {
@@ -789,20 +767,13 @@ async function processJob(job) {
       jobLog.info(`Encoded  : ${tmpFile} (${(newSize / 1e6).toFixed(1)} MB)`);
       jobLog.info(`Output   : ${outFile}`);
       try {
+        checkCancelled();
+        job._finalizing = true;
         await moveFile(tmpFile, outFile, jobLog);
         tmpFile = null; // file is now at outFile — prevent finally from deleting it
         finalPath = outFile;
-        // Update DB BEFORE deleting original — prevents orphan entry if refreshVideoMeta fails
-        await refreshVideoMeta(job.video_id, outFile, jobLog);
-        // Only delete the original AFTER DB is updated
-        if (inFile !== outFile) {
-          try {
-            await fsp.unlink(inFile);
-            jobLog.info(`Original deleted: ${inFile}`);
-          } catch (unlinkErr) {
-            if (unlinkErr.code !== 'ENOENT') jobLog.warn(`Could not delete original (${unlinkErr.message})`);
-          }
-        }
+        // Non-replacing jobs keep the indexed source. The copy belongs to
+        // encode_jobs.output_path, not videos.file_path.
         jobLog.info(`Output → ${outFile}`);
       } catch (e) {
         if (tmpFile !== null) {
@@ -849,6 +820,12 @@ async function processJob(job) {
     });
 
   } catch (e) {
+    if (job._cancelled && !job._finalizing) {
+      const status = job._forceKilled ? 'error' : 'cancelled';
+      await pool.query('UPDATE encode_jobs SET status=?, error=?, ended_at=NOW() WHERE id=?', [status, e.message, job.id]);
+      broadcast('job_update', { id: job.id, status });
+      return;
+    }
     const errMsg = `Unexpected error: ${e.message}\n${e.stack}`;
     jobLog.error(errMsg);
     try {
@@ -862,6 +839,7 @@ async function processJob(job) {
     active.delete(job.id);
     clearProgressThrottle(job.id);
     if (tmpFile) { try { await fsp.unlink(tmpFile); } catch { /* cleanup — file may not exist */ } }
+    if (tmpDir) await fsp.rmdir(tmpDir).catch(() => {}); // Keep stranded output for manual recovery.
     await jobLog.close();
     // Fire webhook if queue is now empty
     webhook.checkAndFire().catch(() => {});
@@ -872,18 +850,26 @@ async function processJob(job) {
 
 function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobLog) {
   return new Promise((resolve) => {
-    let cancelled = false;
+    let cancelled = !!job._cancelled;
     let currentProc = null;
 
     const entry = {
       proc: null,
       video_id: job.video_id,
-      cancel() {
+      job,
+      cancel(force = false) {
+        if (job._finalizing) return false;
+        job._cancelled = true;
+        job._forceKilled ||= force;
         cancelled = true;
         if (currentProc) {
-          currentProc.kill('SIGTERM');
-          setTimeout(() => { try { currentProc.kill('SIGKILL'); } catch { /* process already exited */ } }, 5000);
+          const proc = currentProc;
+          proc.kill(force ? 'SIGKILL' : 'SIGTERM');
+          const timer = setTimeout(() => { if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL'); }, 5000);
+          timer.unref();
+          proc.once('close', () => clearTimeout(timer));
         }
+        return true;
       },
     };
     active.set(job.id, entry);
@@ -946,6 +932,8 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
         });
 
         proc.on('close', (code, signal) => {
+          currentProc = null;
+          entry.proc = null;
           if (signal) jobLog.warn(`[${label}] ffmpeg exited by signal: ${signal} (code=${code})`);
           res({ code, stderrHead, stderrTail, cancelled });
         });
@@ -985,7 +973,7 @@ function runFfmpegWithFallback(job, video, hwArgs, swArgs, tmpFile, gpuIdx, jobL
       } else {
         resolve({ code: -1, stderr: '', cancelled: true });
       }
-    })();
+    })().catch(error => resolve({ code: -1, stderrHead: error.message, stderrTail: '', cancelled: !!job._cancelled }));
   });
 }
 
@@ -1077,40 +1065,29 @@ async function isScheduleAllowed() {
 async function processQueue() {
   if (!running) return;
   if (paused) return; // Queue is paused — don't start new jobs
-  // Safety valve: if _processing stuck for >30s, force-reset it
-  if (_processing && (Date.now() - _processingTs > PROCESSING_TIMEOUT)) {
-    logger.warn('encoder', `processQueue lock stuck for ${Math.round((Date.now() - _processingTs)/1000)}s — force-releasing`);
-    _processing = false;
-  }
   if (_processing) return;
   _processing = true;
-  _processingTs = Date.now();
   try {
     // Check schedule window
     if (!(await isScheduleAllowed())) {
       _processing = false;
-      _processingTs = 0;
       return;
     }
     const pool = db.getPool();
-    while (running && active.size < workerCount) {
+    while (running && !paused && active.size < workerCount) {
       // Atomically claim ONE pending job by updating its status before firing processJob.
       // This prevents the same job being picked twice in rapid succession.
       // Skip jobs in SIGKILL backoff cooldown
-      let rows;
-      if (_retryCooldown.size > 0) {
-        const cooldownIds = [..._retryCooldown];
-        const placeholders = cooldownIds.map(() => '?').join(',');
-        [rows] = await pool.query(
-          `SELECT * FROM encode_jobs WHERE status='pending' AND id NOT IN (${placeholders}) ORDER BY priority DESC, created_at ASC LIMIT 1`,
-          cooldownIds
-        );
-      } else {
-        [rows] = await pool.query(
-          "SELECT * FROM encode_jobs WHERE status='pending' ORDER BY priority DESC, created_at ASC LIMIT 1"
-        );
-      }
+      const excludedJobs = [..._retryCooldown];
+      const busyVideos = [...new Set([...active.values()].map(e => e.video_id))];
+      const [rows] = await pool.query(
+        `SELECT * FROM encode_jobs WHERE status='pending'
+         ${excludedJobs.length ? `AND id NOT IN (${excludedJobs.map(() => '?').join(',')})` : ''}
+         ${busyVideos.length ? `AND video_id NOT IN (${busyVideos.map(() => '?').join(',')})` : ''}
+         ORDER BY priority DESC, created_at ASC LIMIT 1`, [...excludedJobs, ...busyVideos]
+      );
       if (!rows.length) break;
+      if (!running || paused) break;
       const job = rows[0];
 
       // Mark as 'claimed' in DB immediately so next iteration won't pick it again
@@ -1141,17 +1118,24 @@ async function processQueue() {
 
       // Add placeholder to active map so workerCount check works
       active.set(job.id, {
-        proc: null, video_id: job.video_id,
-        cancel() {
-          // Revert this single job to cancelled (don't stop the whole encoder)
-          db.getPool().query("UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=? AND status='encoding'", [job.id]).catch(() => {});
-          broadcast('job_update', { id: job.id, status: 'cancelled' });
-          active.delete(job.id);
+        proc: null, video_id: job.video_id, job,
+        cancel(force = false) {
+          if (job._finalizing) return false;
+          job._cancelled = true;
+          job._forceKilled ||= force;
+          return true;
         },
       });
 
       processJob(job)
-        .catch(e => logger.error('encoder', `Job #${job.id} crash: ${e.message}`))
+        .catch(async e => {
+          if (active.has(job.id)) {
+            active.delete(job.id);
+            if (job._preLockedDevKey) unlockDevice(job._preLockedDevKey);
+          }
+          await pool.query("UPDATE encode_jobs SET status='error', error=?, ended_at=NOW() WHERE id=? AND status='encoding'", ['Worker initialization failed', job.id]).catch(() => {});
+          logger.error('encoder', `Job #${job.id} crash: ${e.message}`);
+        })
         .finally(() => setImmediate(processQueue));
     }
   } catch (e) {
@@ -1165,32 +1149,13 @@ async function processQueue() {
     }
   }
   _processing = false;
-  _processingTs = 0;
 }
 
 /* ─── Job recovery on startup ────────────────────────────────── */
 
 async function recoverStalledJobs() {
-  // Kill orphan ffmpeg processes from previous instance (PM2 restart, crash, etc.)
-  try {
-    const pids = findProcessIds('ffmpeg.*\\.tmp\\.');
-    if (pids.length) {
-      for (const pid of pids) {
-        try { process.kill(parseInt(pid, 10), 'SIGKILL'); } catch { /* process already exited */ }
-      }
-      logger.warn('encoder', `Killed ${pids.length} orphan ffmpeg process(es) from previous instance`);
-    }
-  } catch { /* non-critical */ }
-
-  // Clean up stale .tmp. files in ENCODE_DIR (partial encodes from crashed jobs)
-  try {
-    const files = await fsp.readdir(ENCODE_DIR).catch(() => []);
-    const staleTemps = files.filter(f => /\.tmp\.\d+\./i.test(f));
-    for (const f of staleTemps) {
-      try { await fsp.unlink(path.join(ENCODE_DIR, f)); } catch { /* cleanup — file may not exist */ }
-    }
-    if (staleTemps.length) logger.info('encoder', `Cleaned up ${staleTemps.length} stale temp file(s)`);
-  } catch { /* non-critical */ }
+  // A command-line pattern cannot prove process ownership. Service-level
+  // process cleanup belongs to the supervisor, not a system-wide pgrep/kill.
 
   try {
     const pool = db.getPool();
@@ -1348,21 +1313,22 @@ async function enqueueBatch(videoIds, presetId, replaceOriginal = false, opts = 
   return results;
 }
 
-function cancelJob(jobId) {
+async function cancelJob(jobId) {
   const entry = active.get(jobId);
   if (entry) {
-    entry.cancel();
+    if (!entry.cancel()) return false;
     logger.info('encoder', `Job #${jobId} cancel requested`);
     return true;
   }
   // If not in active map, it might be a pending job — cancel it in DB directly
-  db.getPool().query(
+  const [result] = await db.getPool().query(
     "UPDATE encode_jobs SET status='cancelled', ended_at=NOW() WHERE id=? AND status IN ('pending','encoding')",
     [jobId]
-  ).then(([r]) => {
-    if (r.affectedRows > 0) broadcast('job_update', { id: jobId, status: 'cancelled' });
-  }).catch(() => {});
-  return true;
+  );
+  // A pending job may have been claimed while the UPDATE was waiting.
+  active.get(jobId)?.cancel();
+  if (result.affectedRows > 0) broadcast('job_update', { id: jobId, status: 'cancelled' });
+  return result.affectedRows > 0;
 }
 
 async function cancelPending() {
@@ -1381,11 +1347,11 @@ async function cancelAll() {
   // 2. Kill all actively encoding ffmpeg processes
   const activeIds = [...active.keys()];
   for (const [jobId, entry] of active.entries()) {
-    try { entry.cancel(); } catch { /* already cancelled */ }
+    if (!entry.cancel()) continue;
     // Immediately mark in DB as cancelled (don't wait for processJob to handle it)
     await pool.query(
-      "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error='Annulé par l\'utilisateur' WHERE id=? AND status='encoding'",
-      [jobId]
+      "UPDATE encode_jobs SET status='cancelled', ended_at=NOW(), error=? WHERE id=? AND status='encoding'",
+      ['Annule par utilisateur', jobId]
     ).catch(() => {});
     total++;
   }
@@ -1399,21 +1365,7 @@ async function cancelAll() {
 
 async function forceKillJob(jobId) {
   const entry = active.get(jobId);
-  if (entry && entry.proc) {
-    try { entry.proc.kill('SIGKILL'); } catch { /* process already exited */ }
-    logger.warn('encoder', `Job #${jobId} force-killed (SIGKILL)`);
-  }
-  // Also try to kill by PID pattern (orphan ffmpeg for this job)
-  let orphansKilled = 0;
-  try {
-    const pids = findProcessIds(`ffmpeg.*\\.tmp\\.${jobId}\\.`);
-    if (pids.length) {
-      for (const pid of pids) {
-        try { process.kill(parseInt(pid, 10), 'SIGKILL'); orphansKilled++; } catch { /* process already exited */ }
-      }
-      logger.warn('encoder', `Force-killed ${orphansKilled} orphan ffmpeg process(es) for job #${jobId}`);
-    }
-  } catch { /* non-critical */ }
+  if (entry && !entry.cancel(true)) throw new Error('Job is finalizing; wait for completion');
   // Mark as ERROR (not 'cancelled') so the user can distinguish a force-kill
   // (admin action on a hung process) from a regular cancellation. Errors stay
   // in the queue for retry/inspection while cancelled jobs can be cleared.
@@ -1423,7 +1375,7 @@ async function forceKillJob(jobId) {
     "UPDATE encode_jobs SET status='error', ended_at=NOW(), error=? WHERE id=? AND status IN ('pending','encoding')",
     [errMsg, jobId]
   );
-  active.delete(jobId);
+  if (active.get(jobId) !== entry) active.get(jobId)?.cancel(true);
   clearProgressThrottle(jobId);
   broadcast('job_update', { id: jobId, status: 'error', error: errMsg });
   logger.warn('encoder', `Job #${jobId}: ${errMsg}`);
@@ -1431,11 +1383,12 @@ async function forceKillJob(jobId) {
 }
 
 async function retryJob(jobId) {
+  if (active.has(jobId)) throw new Error('Job is still stopping');
   const pool = db.getPool();
   const [[job]] = await pool.query('SELECT * FROM encode_jobs WHERE id=?', [jobId]);
-  if (!job || !['error', 'cancelled'].includes(job.status)) throw new Error('Cannot retry this job');
+  if (!job || !['error', 'failed', 'cancelled'].includes(job.status)) throw new Error('Cannot retry this job');
   await pool.query(
-    "UPDATE encode_jobs SET status='pending', error=NULL, started_at=NULL, ended_at=NULL, output_path=NULL, output_size=NULL WHERE id=?",
+    "UPDATE encode_jobs SET status='pending', progress=0, retry_count=0, error=NULL, started_at=NULL, ended_at=NULL, output_path=NULL, output_size=NULL WHERE id=? AND status IN ('error','failed','cancelled')",
     [jobId]
   );
   broadcast('job_update', { id: jobId, status: 'pending' });
@@ -1448,8 +1401,8 @@ async function deleteJob(jobId) {
   const pool = db.getPool();
   const [[job]] = await pool.query('SELECT * FROM encode_jobs WHERE id=?', [jobId]);
   if (!job) throw new Error('Job not found');
-  if (job.status === 'encoding') cancelJob(jobId);
-  if (job.output_path) { try { await fsp.unlink(job.output_path); } catch { /* cleanup — file may not exist */ } }
+  if (active.has(jobId) || ['encoding', 'pending'].includes(job.status)) throw new Error('Cancel the job and wait for it to stop before deletion');
+  // Job history deletion must never delete its media (possibly the only copy).
   try { await fsp.unlink(path.join(LOG_DIR, `job_${jobId}.log`)); } catch { /* cleanup — file may not exist */ }
   await pool.query('DELETE FROM encode_jobs WHERE id=?', [jobId]);
   return true;
@@ -1458,7 +1411,8 @@ async function deleteJob(jobId) {
 async function clearFinished() {
   const pool = db.getPool();
   // Delete done + cancelled jobs — keep 'error' jobs so the fail tag persists
-  const [result] = await pool.query("DELETE FROM encode_jobs WHERE status IN ('done','cancelled')");
+  const ids = [...active.keys()];
+  const [result] = await pool.query(`DELETE FROM encode_jobs WHERE status IN ('done','cancelled') ${ids.length ? `AND id NOT IN (${ids.map(() => '?').join(',')})` : ''}`, ids);
   if (result.affectedRows > 0) {
     logger.info('encoder', `Cleared ${result.affectedRows} finished job(s) from queue (errors preserved)`);
     broadcast('job_update', { cleared: true });
@@ -1535,8 +1489,17 @@ async function getHistory(limit = 50, offset = 0) {
 
 async function getJobLog(jobId) {
   const logPath = path.join(LOG_DIR, `job_${jobId}.log`);
-  try { return await fsp.readFile(logPath, 'utf-8'); }
+  let handle;
+  try {
+    handle = await fsp.open(logPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = await handle.stat();
+    if (!stat.isFile()) return null;
+    const buffer = Buffer.alloc(Math.min(stat.size, 1024 * 1024));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, Math.max(0, stat.size - buffer.length));
+    return buffer.subarray(0, bytesRead).toString('utf8');
+  }
   catch { return null; }
+  finally { await handle?.close().catch(() => {}); }
 }
 
 async function start() {

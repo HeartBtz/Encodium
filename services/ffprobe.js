@@ -25,7 +25,7 @@ const PROBE_TIMEOUT_SHORT = 15000;
  */
 async function ffprobeValue(filePath, streamSelect, entries) {
   try {
-    const args = ['-v', 'error'];
+    const args = ['-v', 'error', '-protocol_whitelist', 'file,pipe'];
     if (streamSelect) args.push('-select_streams', streamSelect);
     args.push('-show_entries', entries, '-of', 'default=nw=1:nk=1', '--', filePath);
     const { stdout } = await execFileAsync('ffprobe', args, { timeout: PROBE_TIMEOUT });
@@ -73,7 +73,7 @@ async function bitDepth(filePath) {
  */
 async function sideDataTypes(filePath) {
   try {
-    const args = ['-v', 'error', '-select_streams', 'v:0',
+    const args = ['-v', 'error', '-protocol_whitelist', 'file,pipe', '-select_streams', 'v:0',
       '-show_entries', 'stream_side_data=side_data_type',
       '-of', 'default=nw=1:nk=1', '--', filePath];
     const { stdout } = await execFileAsync('ffprobe', args, { timeout: PROBE_TIMEOUT_SHORT });
@@ -98,7 +98,7 @@ async function duration(filePath) {
  */
 async function badSubtitleIndices(filePath) {
   try {
-    const args = ['-v', 'error', '-show_entries', 'stream=index,codec_type,codec_name',
+    const args = ['-v', 'error', '-protocol_whitelist', 'file,pipe', '-show_entries', 'stream=index,codec_type,codec_name',
       '-of', 'csv=p=0', '--', filePath];
     const { stdout } = await execFileAsync('ffprobe', args, { timeout: PROBE_TIMEOUT_SHORT });
     const bad = [];
@@ -123,7 +123,7 @@ async function badSubtitleIndices(filePath) {
  */
 async function fullInfo(filePath) {
   try {
-    const args = ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', '--', filePath];
+    const args = ['-v', 'error', '-protocol_whitelist', 'file,pipe', '-show_format', '-show_streams', '-of', 'json', '--', filePath];
     const { stdout } = await execFileAsync('ffprobe', args, { timeout: PROBE_TIMEOUT });
     return JSON.parse(stdout);
   } catch (e) {

@@ -7,11 +7,17 @@ const { parseByteRange } = require('../services/http-range');
 const { parseVaapiOutput } = require('../services/gpu-detect');
 
 test('private, loopback, link-local and reserved addresses are blocked', () => {
-  for (const ip of ['127.0.0.1', '10.0.0.1', '100.64.0.1', '169.254.1.1', '172.31.0.1', '192.168.1.1', '::1', 'fd00::1', 'fe80::1', '2001:db8::1']) {
+  for (const ip of ['127.0.0.1', '10.0.0.1', '100.64.0.1', '169.254.1.1', '172.31.0.1', '192.168.1.1', '::1', 'fd00::1', 'fe80::1', '2001:db8::1', '0:0:0:0:0:0:0:1', '0:0:0:0:0:ffff:7f00:1', '64:ff9b::7f00:1', '2002:7f00:1::', '2001:0::1']) {
     assert.equal(isPrivateAddress(ip), true, ip);
   }
   assert.equal(isPrivateAddress('8.8.8.8'), false);
   assert.equal(isPrivateAddress('2606:4700:4700::1111'), false);
+});
+
+test('mixed public/private DNS answers, unsupported schemes and redirects targets fail closed', async () => {
+  const lookup = async () => [{ address: '8.8.8.8', family: 4 }, { address: '0:0:0:0:0:0:0:1', family: 6 }];
+  await assert.rejects(resolvePublicWebhookUrl('https://example.test', lookup), /private|reserved/);
+  await assert.rejects(resolvePublicWebhookUrl('file:///etc/passwd', lookup), /http/);
 });
 
 test('webhook validation rejects DNS rebinding candidates and credentials', async () => {

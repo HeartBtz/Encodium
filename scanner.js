@@ -22,11 +22,12 @@
 const fs   = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb, getPool } = require('./db');
+const { getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb, getPool, withIdleVideos } = require('./db');
 require('dotenv').config({ override: true });
 
 const logger = require('./services/logger');
 const ffprobe = require('./services/ffprobe');
+const { resolveMediaPath, contains } = require('./services/media-files');
 
 // Legacy MEDIA_DIR kept for backwards compat (initial migration seed)
 const LEGACY_MEDIA_DIR = process.env.MEDIA_DIR || path.join(__dirname, 'data', 'media');
@@ -70,6 +71,7 @@ function parseFraction(str) {
 }
 
 async function getVideoMeta(filePath) {
+  await resolveMediaPath(filePath);
   const meta = await ffprobe.fullInfo(filePath);
   if (!meta) return null;
   const video = meta.streams?.find(s => s.codec_type === 'video');
@@ -91,9 +93,9 @@ function runThumbnailFfmpeg(filePath, thumbPath, seekSeconds) {
   return new Promise((resolve, reject) => {
     const child = spawn('ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
-      '-ss', String(seekSeconds), '-i', filePath,
+      '-protocol_whitelist', 'file,pipe', '-ss', String(seekSeconds), '-i', filePath,
       '-frames:v', '1', '-vf', 'scale=320:-2', '-q:v', '3', thumbPath,
-    ], { stdio: ['ignore', 'ignore', 'ignore'] });
+    ], { stdio: ['ignore', 'ignore', 'ignore'], timeout: 30000, killSignal: 'SIGKILL' });
     child.once('error', reject);
     child.once('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg thumbnail exited with ${code}`)));
   });
@@ -117,11 +119,13 @@ function generateThumb(filePath, videoId) {
   const thumbPath = path.join(THUMB_DIR, thumbName);
   if (fs.existsSync(thumbPath)) return Promise.resolve(thumbPath);
   if (thumbGenerating.has(thumbPath)) return thumbGenerating.get(thumbPath);
+  if (thumbQueue.length >= 200) return Promise.resolve(null);
 
   const p = new Promise((resolve) => {
     async function doGenerate() {
       thumbActive++;
       try {
+        await resolveMediaPath(filePath);
         const duration = await ffprobe.duration(filePath);
         const seekSeconds = duration > 0 ? Math.max(0, duration * 0.1) : 0;
         await runThumbnailFfmpeg(filePath, thumbPath, seekSeconds);
@@ -194,32 +198,22 @@ async function addSource(dirPath, label) {
 
 async function removeSource(id) {
   const pool = getPool();
-  // Look up the path before deleting so we can clean up videos
-  const [rows] = await pool.query('SELECT path FROM media_sources WHERE id = ?', [id]);
-  await pool.query('DELETE FROM media_sources WHERE id = ?', [id]);
-
-  // Remove all videos whose file_path starts with this source directory
-  if (rows.length) {
-    const srcPath = rows[0].path.replace(/\/+$/, '') + '/';
-    const [vids] = await pool.query(
-      'SELECT id FROM videos WHERE file_path LIKE ?',
-      [srcPath + '%']
-    );
-    if (vids.length) {
-      const ids = vids.map(v => v.id);
-      // Delete thumbnails
-      for (const vid of vids) {
-        const tp = path.join(THUMB_DIR, `v_${vid.id}.jpg`);
-        try { await fs.promises.unlink(tp); } catch { /* file may not exist */ }
-      }
-      // Delete DB rows in batches
-      for (let i = 0; i < ids.length; i += 500) {
-        const batch = ids.slice(i, i + 500);
-        const ph = batch.map(() => '?').join(',');
-        await pool.query(`DELETE FROM videos WHERE id IN (${ph})`, batch);
-      }
-      logger.info('sources', `Removed source "${rows[0].path}" — purged ${vids.length} video(s) from database`);
+  const [sources] = await pool.query('SELECT id, path FROM media_sources');
+  const source = sources.find(s => s.id === id);
+  if (!source) return;
+  const remaining = sources.filter(s => s.id !== id);
+  const [videos] = await pool.query('SELECT id, file_path FROM videos');
+  // Literal path containment, not LIKE: '%' and '_' are legal filenames.
+  const ids = videos.filter(v => contains(source.path, v.file_path) && !remaining.some(s => contains(s.path, v.file_path))).map(v => v.id);
+  await withIdleVideos(ids, async conn => {
+    await conn.query('DELETE FROM media_sources WHERE id=?', [id]);
+    for (let i = 0; i < ids.length; i += 500) {
+      const batch = ids.slice(i, i + 500);
+      await conn.query(`DELETE FROM videos WHERE id IN (${batch.map(() => '?').join(',')})`, batch);
     }
+  });
+  for (const videoId of ids) {
+    await fs.promises.unlink(path.join(THUMB_DIR, `v_${videoId}.jpg`)).catch(() => {});
   }
 }
 
@@ -234,6 +228,7 @@ const BATCH_SIZE = 500;
 
 async function scanDirectory(onProgress = null) {
   if (scanProgress.running) throw new Error('Scan already in progress');
+  if (syncProgress.running) throw new Error('Sync already in progress');
   cancelRequested = false;
   scanProgress = {
     running: true, total: 0, done: 0, skipped: 0, errors: 0,
@@ -357,12 +352,13 @@ async function scanDirectory(onProgress = null) {
 /* ── Post-scan: enrich metadata with ffprobe ─────────────── */
 async function enrichVideoMeta(concurrency = 3) {
   if (enrichProgress.running) { logger.warn('enrich', 'Enrichment already in progress'); return; }
+  enrichProgress.running = true;
   try {
     const pool = getPool();
     const [rows] = await pool.query(
       "SELECT id, file_path FROM videos WHERE codec IS NULL OR duration IS NULL"
     );
-    if (!rows.length) { logger.info('enrich', 'No videos to enrich — all up to date'); return; }
+    if (!rows.length) { enrichProgress.running = false; logger.info('enrich', 'No videos to enrich — all up to date'); return; }
     enrichProgress = { running: true, total: rows.length, done: 0, errors: 0, startedAt: new Date().toISOString(), finishedAt: null };
     logger.info('enrich', `Enriching metadata for ${rows.length} video(s)…`);
     const tasks = rows.map(row => async () => {
@@ -386,12 +382,13 @@ async function enrichVideoMeta(concurrency = 3) {
 /* ── Post-scan: generate missing thumbnails ──────────────── */
 async function generateMissingThumbs(limit = 5000, concurrency = 4) {
   if (thumbsProgress.running) { logger.warn('thumbs', 'Thumbnail generation already in progress'); return; }
+  thumbsProgress.running = true;
   try {
     const pool = getPool();
     const [rows] = await pool.query(
       'SELECT id, file_path FROM videos WHERE thumb_path IS NULL ORDER BY id DESC LIMIT ?', [limit]
     );
-    if (!rows.length) { logger.info('thumbs', 'No thumbnails to generate — all up to date'); return; }
+    if (!rows.length) { thumbsProgress.running = false; logger.info('thumbs', 'No thumbnails to generate — all up to date'); return; }
     thumbsProgress = { running: true, total: rows.length, done: 0, errors: 0, startedAt: new Date().toISOString(), finishedAt: null };
     logger.info('thumbs', `Generating ${rows.length} thumbnail(s)…`);
     const tasks = rows.map(v => async () => {
@@ -419,6 +416,7 @@ function getSyncProgress() { return { ...syncProgress }; }
 
 async function syncDatabase() {
   if (syncProgress.running) throw new Error('Sync already in progress');
+  if (scanProgress.running) throw new Error('Scan already in progress');
   syncProgress = { running: true, total: 0, done: 0, removed: 0, added: 0, errors: 0, startedAt: new Date().toISOString(), finishedAt: null };
 
   try {
@@ -485,14 +483,15 @@ async function syncDatabase() {
     for (const [fp, id] of dbPaths) {
       try {
         await fs.promises.access(fp, fs.constants.F_OK);
-      } catch {
-        candidates.push({ id, fp });
+      } catch (err) {
+        if (err.code === 'ENOENT') candidates.push({ id, fp });
+        else syncProgress.errors++;
       }
       syncProgress.done++;
     }
 
     // Re-verify candidates with parent-dir check + retry to avoid NFS-flap mass deletions.
-    const toRemove = [];
+    let toRemove = [];
     if (candidates.length) {
       logger.info('sync', `Phase 1b: Re-verifying ${candidates.length} candidate orphan(s) (NFS-safe double-check)…`);
       // Small delay lets transient NFS issues clear
@@ -510,8 +509,9 @@ async function syncDatabase() {
         try {
           await fs.promises.access(fp, fs.constants.F_OK);
           // File came back on retry — was a transient hiccup.
-        } catch {
-          toRemove.push(id);
+        } catch (err) {
+          if (err.code === 'ENOENT') toRemove.push(id);
+          else syncProgress.errors++;
         }
       }
       const transient = candidates.length - toRemove.length;
@@ -521,18 +521,27 @@ async function syncDatabase() {
     }
 
     if (toRemove.length) {
+      const removed = [];
       // Delete in batches of 500
       for (let i = 0; i < toRemove.length; i += 500) {
         const batch = toRemove.slice(i, i + 500);
-        const ph = batch.map(() => '?').join(',');
-        await pool.query(`DELETE FROM videos WHERE id IN (${ph})`, batch);
+        try {
+          await withIdleVideos(batch, async conn => {
+            await conn.query(`DELETE FROM videos WHERE id IN (${batch.map(() => '?').join(',')})`, batch);
+          });
+        } catch (err) {
+          if (err.status === 409) continue; // Keep rows AND thumbnails while jobs are outstanding.
+          throw err;
+        }
+        removed.push(...batch);
         // Also remove thumbnails
         for (const id of batch) {
           const tp = path.join(THUMB_DIR, `v_${id}.jpg`);
           try { await fs.promises.unlink(tp); } catch { /* file may not exist */ }
         }
       }
-      syncProgress.removed = toRemove.length;
+      toRemove = removed;
+      syncProgress.removed = removed.length;
       logger.info('sync', `Removed ${toRemove.length} orphan DB entries`);
     }
 

@@ -20,6 +20,8 @@ const LEVELS = { debug: 0, info: 1, warn: 2, error: 3, success: 4 };
  * @param {object} [extra] - Optional structured data
  */
 function log(level, source, message, extra = null) {
+  source = String(source).replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 100);
+  message = String(message).replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 16000);
   const entry = {
     id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
     ts: new Date().toISOString(),
@@ -36,6 +38,7 @@ function log(level, source, message, extra = null) {
   const data = JSON.stringify(entry);
   for (const client of sseClients) {
     try {
+      if (client.writableLength > 1024 * 1024) { client.destroy(); sseClients.delete(client); continue; }
       client.write(`event: log\ndata: ${data}\n\n`);
     } catch {
       sseClients.delete(client);

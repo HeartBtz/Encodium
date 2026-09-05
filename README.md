@@ -131,6 +131,7 @@ The install script is idempotent — `bash install.sh` also works for updates.
 | `DB_NAME` | `encodium` | Database name |
 | `NODE_ENV` | — | Set to `production` to hide error details |
 | `COOKIE_SECURE` | `false` | Force the session cookie to HTTPS-only (recommended behind TLS) |
+| `TRUST_PROXY` | empty | Trusted proxy source IPs/CIDRs, comma-separated. Empty ignores forwarded headers; never use `true` or a hop count |
 | `CORS_ORIGINS` | — | Optional comma-separated origin allowlist; cross-origin access is denied by default |
 | `AUTH_RETURN_BEARER_TOKEN` | `false` | Return a bearer token at login for explicit API clients |
 | `PORT` | `4000` | HTTP server port |
@@ -138,6 +139,28 @@ The install script is idempotent — `bash install.sh` also works for updates.
 | `THUMB_DIR` | `./data/thumbs` | Thumbnail storage |
 | `MAX_WORKERS` | `2` | Concurrent encoding workers (1–8) |
 | `MEDIA_DIR` | — | *Legacy.* Auto-migrated as first source on boot. Use **Settings → Sources** |
+
+For direct LAN HTTP, leave `COOKIE_SECURE=false` and `TRUST_PROXY` empty. No
+HTTPS redirect or CSP asset upgrade is forced. Behind TLS termination, configure
+only the actual proxy source addresses and ensure it overwrites forwarded
+headers. `COOKIE_SECURE=true` also accepts an HTTPS browser Origin matching the
+request Host when the upstream request protocol is HTTP. If the proxy changes
+Host, configure the exact external origin in `CORS_ORIGINS`. Do not use a wildcard
+or an inferred production domain. Secure cookies intentionally cannot support
+ordinary non-loopback LAN HTTP; choose the setting for the intended access path.
+
+Encoding and destructive operations require an admin. Non-replacing jobs keep
+the indexed source and store a uniquely named copy in `encode_jobs.output_path`.
+Deleting job history never removes media. Busy media deletion/source removal/DB
+clear is refused; cancel queued jobs and wait for active workers first. Publication
+uses a staged file on the destination filesystem and refuses existing unrelated
+targets. Filesystems without hard-link support fail safely rather than overwrite.
+Only supervisor-owned process cleanup is permitted: the application no longer
+kills arbitrary processes by an FFmpeg command-line pattern. Stale temporary
+files after crashes require operator review.
+
+See [the 2026-09-05 audit](AUDIT-2026-09-05.md) for tests, compatibility notes,
+remaining risks and isolated browser/FFmpeg/database reproduction commands.
 
 ---
 

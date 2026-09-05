@@ -410,6 +410,7 @@ body {
 }
 .mb-card-cb {
   position: absolute; top: 4px; left: 4px;
+  z-index: 2;
   width: 15px; height: 15px; accent-color: var(--a-accent); cursor: pointer;
 }
 .mb-empty { grid-column: 1/-1; text-align: center; color: var(--a-text-muted); padding: 32px; font-size: 13px; }
