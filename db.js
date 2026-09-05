@@ -37,11 +37,8 @@ const pool = mysql.createPool({
 
 async function safeAlter(conn, sql) {
   try { await conn.query(sql); } catch (e) {
-    // Ignore "duplicate column", "column doesn't exist" (for CHANGE), "Unknown column" etc.
-    if (e.errno === 1060 || e.errno === 1054 || e.errno === 1091) return;
-    // If it's just "can't drop / already exists" type, also ignore
-    if (e.message && e.message.includes('Duplicate')) return;
-    console.warn(`[DB] migration skipped: ${e.message}`);
+    if (e.errno === 1060) return; // Additive migration already applied.
+    throw e;
   }
 }
 
@@ -133,9 +130,26 @@ async function initSchema() {
     await safeAlter(conn, "ALTER TABLE encode_jobs MODIFY COLUMN target_codec VARCHAR(20) DEFAULT ''");
     await safeAlter(conn, "ALTER TABLE encode_jobs MODIFY COLUMN encoder VARCHAR(50) DEFAULT ''");
     await safeAlter(conn, "ALTER TABLE encode_jobs MODIFY COLUMN status ENUM('pending','encoding','done','failed','error','cancelled') DEFAULT 'pending'");
-    // Migrate old column names if they exist
-    await safeAlter(conn, 'ALTER TABLE encode_jobs CHANGE COLUMN file_size_after output_size BIGINT DEFAULT 0');
-    await safeAlter(conn, 'ALTER TABLE encode_jobs CHANGE COLUMN finished_at ended_at DATETIME');
+    // Preserve legacy columns and copy data after adding their replacements.
+    // CHANGE after ADD used to fail on a duplicate destination column.
+    const [jobColumns] = await conn.query('SHOW COLUMNS FROM encode_jobs');
+    const [legacyMigration] = await conn.query("SELECT value FROM settings WHERE `key`='migration_legacy_job_columns_v1'");
+    if (!legacyMigration.length && jobColumns.some(c => ['file_size_after', 'finished_at'].includes(c.Field))) {
+      await conn.beginTransaction();
+      try {
+        if (jobColumns.some(c => c.Field === 'file_size_after')) {
+          await conn.query('UPDATE encode_jobs SET output_size=file_size_after WHERE COALESCE(output_size,0)=0 AND file_size_after > 0');
+        }
+        if (jobColumns.some(c => c.Field === 'finished_at')) {
+          await conn.query('UPDATE encode_jobs SET ended_at=finished_at WHERE ended_at IS NULL AND finished_at IS NOT NULL');
+        }
+        await conn.query("INSERT INTO settings (`key`, value) VALUES ('migration_legacy_job_columns_v1', '1')");
+        await conn.commit();
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      }
+    }
     // v1.1 — encode options (container, downscale, tonemap)
     await safeAlter(conn, "ALTER TABLE encode_jobs ADD COLUMN encode_options TEXT AFTER quality");
     // v1.1 — job priority
@@ -167,7 +181,7 @@ async function initSchema() {
     if (savingsCount === 0) {
       await conn.query(`
         INSERT INTO encoding_savings (video_id, filename, codec_after, size_before, size_after, saved, preset_id, created_at)
-        SELECT ej.video_id, v.filename, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(ej.preset_json, '$.codec')), ''), ej.file_size_before, ej.output_size,
+        SELECT ej.video_id, v.filename, CASE WHEN JSON_VALID(ej.preset_json) THEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(ej.preset_json, '$.codec')), '') ELSE '' END, ej.file_size_before, ej.output_size,
                ej.file_size_before - ej.output_size, ej.preset_id, ej.ended_at
         FROM encode_jobs ej LEFT JOIN videos v ON ej.video_id = v.id
         WHERE ej.status = 'done' AND ej.file_size_before > 0 AND ej.output_size > 0
@@ -261,12 +275,38 @@ async function updateVideoThumb(id, thumbPath) {
 }
 
 async function clearAll() {
-  await pool.query('SET FOREIGN_KEY_CHECKS = 0');
-  await pool.query('TRUNCATE TABLE encode_jobs');
-  await pool.query('TRUNCATE TABLE videos');
-  await pool.query('TRUNCATE TABLE encoding_savings');
-  await pool.query('TRUNCATE TABLE custom_presets');
-  await pool.query('SET FOREIGN_KEY_CHECKS = 1');
+  return withIdleVideos(null, async conn => {
+    await conn.query('DELETE FROM encode_jobs');
+    await conn.query('DELETE FROM videos');
+    await conn.query('DELETE FROM encoding_savings');
+    await conn.query('DELETE FROM custom_presets');
+  });
+}
+
+async function withIdleVideos(ids, action) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const where = ids === null ? '' : `WHERE id IN (${ids.map(() => '?').join(',') || 'NULL'})`;
+    const [videos] = await conn.query(`SELECT id, file_path FROM videos ${where} ORDER BY id FOR UPDATE`, ids || []);
+    const selected = videos.map(v => v.id);
+    if (selected.length) {
+      const [busy] = await conn.query(`SELECT id FROM encode_jobs WHERE video_id IN (${selected.map(() => '?').join(',')}) AND status IN ('pending','encoding') LIMIT 1 FOR UPDATE`, selected);
+      if (busy.length) {
+        const err = new Error('Cancel queued jobs and wait for workers to stop first');
+        err.status = 409;
+        throw err;
+      }
+    }
+    const result = await action(conn, videos);
+    await conn.commit();
+    return result;
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 }
 
 /* ── Settings ──────────────────────────────────────────────────── */
@@ -326,7 +366,7 @@ async function countAdmins() {
 function getPool() { return pool; }
 
 module.exports = {
-  getPool, initSchema, clearAll,
+  getPool, initSchema, clearAll, withIdleVideos,
   getAllExistingPaths, batchInsertVideos, updateVideoMeta, updateVideoThumb,
   getSetting, setSetting,
   createUser, getUserByEmail, getUserById, updateLastLogin, listUsers, deleteUser, countAdmins,

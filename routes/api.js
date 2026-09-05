@@ -19,6 +19,7 @@ const logger     = require('../services/logger');
 const { mimeForExt } = require('../services/ffmpeg-args');
 const { parseByteRange } = require('../services/http-range');
 const { resolvePublicWebhookUrl } = require('../services/network-security');
+const { resolveMediaPath } = require('../services/media-files');
 const {
   signToken, setSessionCookie, clearSessionCookie, requireAuth, requireAdmin,
 } = require('../middleware/auth');
@@ -28,6 +29,22 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 function safeError(e, fallback = 'Internal server error') {
   return IS_PROD ? fallback : (e.message || fallback);
 }
+
+function validIds(ids) {
+  return Array.isArray(ids) && ids.length > 0 && ids.every(id => Number.isSafeInteger(id) && id > 0);
+}
+
+function mediaBusy() {
+  return encoder.getStatus().activeJobs > 0 || scanner.getState().running || scanner.getSyncProgress().running ||
+    scanner.getEnrichProgress().running || scanner.getThumbsProgress().running;
+}
+
+router.use((req, res, next) => {
+  // mysql2.query expands object/array values into SQL fragments. API filters
+  // are scalar strings, never nested qs objects or repeated query parameters.
+  if (Object.values(req.query).some(v => typeof v !== 'string')) return res.status(400).json({ error: 'Query values must be strings' });
+  next();
+});
 
 /* ─── Shared SQL & query helpers ─────────────────────────── */
 
@@ -94,7 +111,7 @@ const dummyPasswordHash = bcrypt.hash('encodium-invalid-login-sentinel', 12);
 /* ─── :id param validation ────────────────────────────────── */
 router.param('id', (req, res, next, val) => {
   const n = Number(val);
-  if (!Number.isInteger(n) || n < 1) return res.status(400).json({ error: 'Invalid id' });
+  if (!Number.isSafeInteger(n) || n < 1) return res.status(400).json({ error: 'Invalid id' });
   req.params.id = n;          // coerce once — downstream code gets a number
   next();
 });
@@ -229,11 +246,16 @@ router.get('/videos', requireAuth, async (req, res) => {
     const { sort = 'filename', order = 'asc', page = 1, limit = 50 } = req.query;
     const { whereSQL, params } = buildVideoFilterQuery(req.query);
 
-    const sortExpr = SORT_COLUMN_MAP[sort] || SORT_COLUMN_MAP.filename;
+    const sortExpr = Object.hasOwn(SORT_COLUMN_MAP, sort) ? SORT_COLUMN_MAP[sort] : SORT_COLUMN_MAP.filename;
     const sortDir = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
-    const lim = Math.min(200, Math.max(1, parseInt(limit, 10)));
-    const off = Math.max(0, (parseInt(page, 10) - 1)) * lim;
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    if (!Number.isSafeInteger(pageNum) || pageNum < 1 || !Number.isSafeInteger(limitNum) || limitNum < 1 || !Number.isSafeInteger((pageNum - 1) * Math.min(200, limitNum))) {
+      return res.status(400).json({ error: 'Invalid pagination' });
+    }
+    const lim = Math.min(200, limitNum);
+    const off = (pageNum - 1) * lim;
 
     const [rows] = await pool.query(
       `SELECT v.*, ${FAIL_EXISTS_SQL} AS encode_failed FROM videos v ${whereSQL} ORDER BY ${sortExpr} ${sortDir} LIMIT ? OFFSET ?`,
@@ -270,33 +292,31 @@ router.get('/videos/:id', requireAuth, async (req, res) => {
 router.post('/videos/delete', requireAdmin, async (req, res) => {
   try {
     const { ids } = req.body;
-    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
-    const pool = db.getPool();
-    const placeholders = ids.map(() => '?').join(',');
-    const [rows] = await pool.query(`SELECT id, file_path FROM videos WHERE id IN (${placeholders})`, ids);
-    logger.info('api', `Delete request: ${ids.length} id(s) sent, ${rows.length} found in DB`);
+    if (!validIds(ids)) return res.status(400).json({ error: 'Positive integer ids array required' });
+    if (mediaBusy()) return res.status(409).json({ error: 'Media workers are busy' });
     const fileErrors = [];
-    for (const v of rows) {
-      // Delete physical file
-      if (v.file_path) {
-        try { await fsp.unlink(v.file_path); } catch (e) {
-          if (e.code !== 'ENOENT') fileErrors.push({ id: v.id, error: e.message });
+    const deleted = await db.withIdleVideos([...new Set(ids)], async (pool, rows) => {
+      let count = 0;
+      for (const v of rows) {
+        if (v.file_path) {
+          try {
+            await resolveMediaPath(v.file_path, { allowMissing: true, pool });
+            await fsp.unlink(v.file_path).catch(e => { if (e.code !== 'ENOENT') throw e; });
+          } catch (e) {
+            fileErrors.push({ id: v.id, error: safeError(e, 'File deletion failed') });
+            continue; // Keep the indexed row when its file could not be deleted.
+          }
         }
+        const thumbPath = path.resolve(scanner.THUMB_DIR, `v_${v.id}.jpg`);
+        try { await fsp.unlink(thumbPath); } catch { /* already gone */ }
+        await pool.query('DELETE FROM videos WHERE id=?', [v.id]);
+        count++;
       }
-      // Delete thumbnail
-      const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${v.id}.jpg`);
-      try { await fsp.unlink(thumbPath); } catch { /* already gone */ }
-    }
-    // Batch delete from DB (cascade handles encode_jobs via FK)
-    if (rows.length > 0) {
-      const delIds = rows.map(v => v.id);
-      const ph = delIds.map(() => '?').join(',');
-      await pool.query(`DELETE FROM encode_jobs WHERE video_id IN (${ph})`, delIds);
-      await pool.query(`DELETE FROM videos WHERE id IN (${ph})`, delIds);
-    }
-    logger.info('api', `Deleted ${rows.length} video(s) (requested: ${ids.length})`);
-    res.json({ deleted: rows.length, fileErrors });
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+      return count;
+    });
+    logger.info('api', `Deleted ${deleted} video(s) (requested: ${ids.length})`);
+    res.json({ deleted, fileErrors });
+  } catch (e) { res.status(e.status === 409 ? 409 : 500).json({ error: safeError(e) }); }
 });
 
 router.get('/folders', requireAuth, async (req, res) => {
@@ -365,11 +385,11 @@ router.get('/stats', requireAuth, async (req, res) => {
 
 router.get('/thumb/:id', requireAuth, async (req, res) => {
   const id = req.params.id;
-  const thumbPath = path.join(__dirname, '..', 'data', 'thumbs', `v_${id}.jpg`);
+  const thumbPath = path.resolve(scanner.THUMB_DIR, `v_${id}.jpg`);
 
   // Already exists → serve immediately
   try {
-    await fsp.access(thumbPath, fs.constants.F_OK);
+    if (!(await fsp.lstat(thumbPath)).isFile()) return res.status(404).end();
     return res.sendFile(thumbPath);
   } catch { /* not found — continue below */ }
 
@@ -402,18 +422,18 @@ router.get('/thumb/:id', requireAuth, async (req, res) => {
    ═══════════════════════════════════════════════════════════════ */
 
 router.get('/stream/:id', requireAuth, async (req, res) => {
+  let handle;
   try {
     const pool = db.getPool();
     const [rows] = await pool.query('SELECT file_path, size FROM videos WHERE id = ?', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
 
     const video = rows[0];
-    const filePath = video.file_path;
-    let fileSize = video.size;
-    if (!fileSize) {
-      const st = await fsp.stat(filePath);
-      fileSize = st.size;
-    }
+    const filePath = await resolveMediaPath(video.file_path);
+    handle = await fsp.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error('Not a regular media file');
+    const fileSize = stat.size; // Database size can be stale after external edits.
 
     const mime = mimeForExt(path.extname(filePath));
     const range = req.headers.range;
@@ -421,6 +441,7 @@ router.get('/stream/:id', requireAuth, async (req, res) => {
       let parsed;
       try { parsed = parseByteRange(range, Number(fileSize)); }
       catch {
+        await handle.close();
         res.set('Content-Range', `bytes */${fileSize}`);
         return res.status(416).end();
       }
@@ -432,8 +453,9 @@ router.get('/stream/:id', requireAuth, async (req, res) => {
         'Content-Length': chunkSize,
         'Content-Type': mime,
       });
-      const stream = fs.createReadStream(filePath, { start, end });
+      const stream = handle.createReadStream({ start, end });
       stream.on('error', () => res.destroy());
+      res.once('close', () => stream.destroy());
       stream.pipe(res);
     } else {
       res.writeHead(200, {
@@ -441,11 +463,16 @@ router.get('/stream/:id', requireAuth, async (req, res) => {
         'Content-Type': mime,
         'Accept-Ranges': 'bytes',
       });
-      const stream = fs.createReadStream(filePath);
+      const stream = handle.createReadStream();
       stream.on('error', () => res.destroy());
+      res.once('close', () => stream.destroy());
       stream.pipe(res);
     }
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+  } catch (e) {
+    await handle?.close().catch(() => {});
+    if (res.headersSent) return res.destroy();
+    res.status(404).json({ error: 'Media unavailable' });
+  }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -474,14 +501,16 @@ router.get('/encode/history', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
-router.post('/encode/enqueue', requireAuth, async (req, res) => {
+router.post('/encode/enqueue', requireAdmin, async (req, res) => {
   try {
     let { presetId, container, downscale, tonemap } = req.body;
     const { videoIds, replaceOriginal, force } = req.body;
     let customCq;
-    if (!presetId) return res.status(400).json({ error: 'presetId required' });
-    const ids = Array.isArray(videoIds) ? videoIds : [videoIds];
-    if (!ids.length) return res.status(400).json({ error: 'videoIds required' });
+    if (typeof presetId !== 'string' || !presetId) return res.status(400).json({ error: 'presetId required' });
+    const ids = Array.isArray(videoIds) ? [...new Set(videoIds)] : [videoIds];
+    if (!validIds(ids)) return res.status(400).json({ error: 'Positive integer videoIds required' });
+    if ([replaceOriginal, force, tonemap].some(v => v !== undefined && typeof v !== 'boolean')) return res.status(400).json({ error: 'Encoding flags must be booleans' });
+    if ((container !== undefined && !ALLOWED_CONTAINERS.has(container)) || (downscale !== undefined && !ALLOWED_DOWNSCALE.has(String(downscale)))) return res.status(400).json({ error: 'Invalid encoding options' });
 
     // If custom preset, resolve it and find the best matching hardware preset
     if (presetId.startsWith('custom_')) {
@@ -492,7 +521,8 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
 
       // Find best hardware preset for this codec
       const caps = await gpuDetect.detectAll();
-      const hwPreset = caps.presets.find(p => p.codec === cp.codec);
+      const codec = cp.codec === 'hevc' ? 'h265' : cp.codec === 'avc' ? 'h264' : cp.codec;
+      const hwPreset = caps.presets.find(p => p.codec === codec);
       if (!hwPreset) return res.status(400).json({ error: `No encoder available for codec ${cp.codec}` });
       presetId = hwPreset.id;
       customCq = cp.cq;  // pass custom CQ via opts (avoids mutating cached preset)
@@ -501,20 +531,24 @@ router.post('/encode/enqueue', requireAuth, async (req, res) => {
       tonemap = !!cp.tonemap;
     }
 
-    const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap, force: !!force, customCq: customCq || undefined };
+    const opts = { container: container || 'auto', downscale: downscale || '', tonemap: !!tonemap, force: !!force, customCq: customCq ?? undefined };
     const result = await encoder.enqueueBatch(ids, presetId, !!replaceOriginal, opts);
     res.json({ jobs: result.jobs, skipped: result.skipped });
   } catch (e) { res.status(400).json({ error: safeError(e, 'Bad request') }); }
 });
 
-router.post('/encode/cancel/:id', requireAdmin, (req, res) => {
-  const ok = encoder.cancelJob(parseInt(req.params.id, 10));
-  res.json({ cancelled: ok });
+router.post('/encode/cancel/:id', requireAdmin, async (req, res) => {
+  try {
+    const ok = await encoder.cancelJob(req.params.id);
+    res.json({ cancelled: ok });
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/encode/cancel-all', requireAdmin, async (req, res) => {
-  const n = await encoder.cancelAll();
-  res.json({ cancelled: n });
+  try {
+    const n = await encoder.cancelAll();
+    res.json({ cancelled: n });
+  } catch (e) { res.status(500).json({ error: safeError(e) }); }
 });
 
 router.post('/encode/force-kill/:id', requireAdmin, async (req, res) => {
@@ -557,7 +591,7 @@ router.delete('/encode/job/:id', requireAdmin, async (req, res) => {
 
 router.post('/encode/workers', requireAdmin, (req, res) => {
   const { count } = req.body;
-  if (!count || count < 1 || count > 8) return res.status(400).json({ error: 'count 1-8' });
+  if (!Number.isInteger(count) || count < 1 || count > 8) return res.status(400).json({ error: 'count 1-8' });
   const n = encoder.setWorkerCount(count);
   res.json({ workers: n });
 });
@@ -566,7 +600,7 @@ router.post('/encode/workers', requireAdmin, (req, res) => {
 router.post('/videos/clear-skip', requireAdmin, async (req, res) => {
   try {
     const { ids } = req.body;
-    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+    if (!validIds(ids)) return res.status(400).json({ error: 'Positive integer ids array required' });
     const pool = db.getPool();
     const ph = ids.map(() => '?').join(',');
     const [result] = await pool.query(`UPDATE videos SET encode_skip = 0 WHERE id IN (${ph})`, ids);
@@ -575,7 +609,7 @@ router.post('/videos/clear-skip', requireAdmin, async (req, res) => {
 });
 
 /* Job log endpoint — returns detailed per-job ffmpeg log */
-router.get('/encode/job/:id/log', requireAuth, async (req, res) => {
+router.get('/encode/job/:id/log', requireAdmin, async (req, res) => {
   try {
     const log = await encoder.getJobLog(parseInt(req.params.id, 10));
     if (log === null) return res.status(404).json({ error: 'Log not found' });
@@ -608,7 +642,13 @@ router.post('/encode/job/:id/move', requireAdmin, async (req, res) => {
 });
 
 /* SSE stream for real-time updates (authenticated by HttpOnly session cookie) */
+const eventConnections = new Map();
 router.get('/events', requireAuth, (req, res) => {
+  const userId = req.user.id;
+  if ((eventConnections.get(userId) || 0) >= 5 || [...eventConnections.values()].reduce((n, v) => n + v, 0) >= 100) {
+    return res.status(429).json({ error: 'Too many event connections' });
+  }
+  eventConnections.set(userId, (eventConnections.get(userId) || 0) + 1);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -617,8 +657,20 @@ router.get('/events', requireAuth, (req, res) => {
   });
   res.write('event: connected\ndata: {}\n\n');
   encoder.addSSEClient(res);
-  logger.addClient(res);
-  req.on('close', () => { encoder.removeSSEClient(res); logger.removeClient(res); });
+  if (req.user.role === 'admin') logger.addClient(res);
+  const timer = setInterval(async () => {
+    try {
+      const user = await db.getUserById(userId);
+      if (!user || user.role !== req.user.role || Date.now() >= req.user.exp * 1000) res.end();
+    } catch { res.end(); }
+  }, 30000);
+  req.on('close', () => {
+    clearInterval(timer);
+    const count = (eventConnections.get(userId) || 1) - 1;
+    if (count) eventConnections.set(userId, count); else eventConnections.delete(userId);
+    encoder.removeSSEClient(res);
+    logger.removeClient(res);
+  });
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -682,13 +734,13 @@ router.post('/custom-presets', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'name required' });
     }
     const codecKey = (codec || 'h265').toString().toLowerCase();
-    const range = CQ_RANGES[codecKey];
+    const range = Object.hasOwn(CQ_RANGES, codecKey) ? CQ_RANGES[codecKey] : null;
     if (!range) {
       return res.status(400).json({ error: `Unsupported codec '${codec}' — must be one of: av1, h265, h264` });
     }
-    const cqNum = parseInt(cq, 10);
+    const cqNum = cq === undefined || cq === null || cq === '' ? NaN : Number(cq);
     if (cq !== undefined && cq !== null && cq !== '') {
-      if (!Number.isFinite(cqNum) || cqNum < range[0] || cqNum > range[1]) {
+      if (!Number.isInteger(cqNum) || cqNum < range[0] || cqNum > range[1]) {
         return res.status(400).json({
           error: `CQ value ${cq} out of range for ${codecKey} (allowed: ${range[0]}-${range[1]})`,
         });
@@ -736,6 +788,11 @@ router.get('/settings/schedule', requireAuth, async (req, res) => {
 router.post('/settings/schedule', requireAdmin, async (req, res) => {
   try {
     const { enabled, start, end } = req.body;
+    if ((enabled !== undefined && typeof enabled !== 'boolean') ||
+        (start !== undefined && (!Number.isInteger(Number(start)) || Number(start) < 0 || Number(start) > 23)) ||
+        (end !== undefined && (!Number.isInteger(Number(end)) || Number(end) < 1 || Number(end) > 24))) {
+      return res.status(400).json({ error: 'Invalid schedule' });
+    }
     if (enabled !== undefined) await db.setSetting('schedule_enabled', enabled ? '1' : '0');
     if (start !== undefined) await db.setSetting('schedule_start', String(Math.max(0, Math.min(23, parseInt(start, 10)))));
     if (end !== undefined)   await db.setSetting('schedule_end', String(Math.max(1, Math.min(24, parseInt(end, 10)))));
@@ -846,6 +903,7 @@ router.post('/settings/sources', requireAdmin, async (req, res) => {
 /** Remove a media source directory */
 router.delete('/settings/sources/:id', requireAdmin, async (req, res) => {
   try {
+    if (mediaBusy()) return res.status(409).json({ error: 'Media workers are busy' });
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
     await scanner.removeSource(id);
@@ -854,7 +912,7 @@ router.delete('/settings/sources/:id', requireAdmin, async (req, res) => {
     const watcher = require('../services/watcher');
     watcher.refreshWatchers().catch(() => {});
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: safeError(e) }); }
+  } catch (e) { res.status(e.status === 409 ? 409 : 500).json({ error: safeError(e) }); }
 });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -908,10 +966,11 @@ router.get('/browse', requireAdmin, async (req, res) => {
 
 router.post('/clear', requireAdmin, async (req, res) => {
   try {
+    if (mediaBusy()) return res.status(409).json({ error: 'Media workers are busy' });
     await db.clearAll();
     logger.warn('api', `Database cleared by ${req.user.email}`);
     res.json({ message: 'Database cleared' });
-  } catch (e) { logger.error('api', `Clear DB error: ${e.message}`); res.status(500).json({ error: safeError(e) }); }
+  } catch (e) { logger.error('api', `Clear DB error: ${e.message}`); res.status(e.status === 409 ? 409 : 500).json({ error: safeError(e) }); }
 });
 
 module.exports = router;

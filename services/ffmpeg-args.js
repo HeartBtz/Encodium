@@ -197,7 +197,7 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   }
 
   // Rate control
-  const cq = preset.cq || (isAv1 ? 30 : 23);
+  const cq = preset.cq ?? (isAv1 ? 30 : 23);
   if (isNvidia) {
     if (isAv1) {
       if (encCaps.rc && encCaps.qp) {
@@ -217,7 +217,7 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   } else if (preset.type === 'qsv') {
     tail.push('-global_quality', String(cq), '-preset:v:0', 'medium');
   } else {
-    if (preset.encoder === 'libx265') tail.push('-crf', String(cq), '-preset:v:0', 'medium');
+    if (['libx264', 'libx265'].includes(preset.encoder)) tail.push('-crf', String(cq), '-preset:v:0', 'medium');
     else if (preset.encoder === 'libsvtav1') tail.push('-crf', String(cq), '-preset:v:0', '6');
     else if (preset.encoder === 'libaom-av1') tail.push('-crf', String(cq), '-cpu-used', '4');
   }
@@ -237,8 +237,8 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   }
 
   // Spatial AQ (NVENC quality improvement)
-  if (encCaps.spatial_aq) tail.push('-spatial_aq', '1');
-  if (encCaps.aq_strength) tail.push('-aq-strength', '8');
+  if (isNvidia && encCaps.spatial_aq) tail.push('-spatial_aq', '1');
+  if (isNvidia && encCaps.aq_strength) tail.push('-aq-strength', '8');
 
   // Timestamp preservation
   tail.push('-fps_mode', 'passthrough');
@@ -261,7 +261,7 @@ function buildArgs(preset, inFile, outFile, probeInfo, encodeOpts = {}) {
   tail.push('-f', container, outFile);
 
   // Common head for all commands (20M probe is plenty — default is 5M)
-  const commonHead = ['-hide_banner', '-nostdin', '-y', '-probesize', '20M', '-analyzeduration', '20M'];
+  const commonHead = ['-hide_banner', '-nostdin', '-y', '-protocol_whitelist', 'file,pipe', '-probesize', '20M', '-analyzeduration', '20M'];
 
   const inputHead = isVaapi
     ? [...commonHead, '-vaapi_device', vaapiDevice || preset.renderDevice || '/dev/dri/renderD128']

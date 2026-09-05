@@ -56,7 +56,7 @@ async function checkAndFire() {
       lookup: (_hostname, _options, callback) => callback(null, target.address, target.family),
       servername: target.hostname,
     };
-    const req = httpMod.request(options, () => {});
+    const req = httpMod.request(options, response => response.resume());
     req.on('timeout', () => { req.destroy(); logger.warn('encoder', 'Webhook request timed out'); });
     req.on('error', (e) => logger.warn('encoder', `Webhook error: ${e.message}`));
     req.write(body);

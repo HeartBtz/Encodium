@@ -239,7 +239,8 @@
         window._corsErrorResetTimer = setTimeout(() => { window._corsErrorCount = 0; }, 10000);
 
         // Retry once on network errors (server restart, brief outage)
-        if (_retry < 1) {
+        if (_retry < 1 && ['GET', 'HEAD'].includes(method)) {
+          _activeRequests--;
           _logNet({ time: _ts(), method, path, status: 'NET_ERR', duration: ms, error: err.message, retry: 1 });
           console.warn(`[NET #${reqId}] ✖ NETWORK ERROR (${ms}ms) ${path}: ${err.message} — retrying in 2s…`);
           return new Promise(r => setTimeout(r, 2000)).then(() => api(path, opts, _retry + 1));
@@ -265,7 +266,9 @@
     if (h) return `${h}h ${m}m`;
     return `${m}m ${Math.floor(s % 60)}s`;
   }
-  function escHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function escHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  }
   function truncPath(p) { return p ? p.split('/').pop() : ''; }
 
   /* ── Live progress cache (survives queue re-renders) ─── */
@@ -723,7 +726,7 @@
           ${v.encode_failed ? `<span class="mb-card-fail" title="${escHtml(t('lib.fail_tag'))}">❌ fail</span>` : ''}
           <div class="mb-card-info">
             <div class="mb-card-name" title="${escHtml(v.filename)}">${escHtml(v.filename)}</div>
-            <div class="mb-card-meta">${v.codec || '?'} · ${v.width ? v.width + '×' + v.height : '?'} · ${fmtDur(v.duration)}</div>
+            <div class="mb-card-meta">${escHtml(v.codec || '?')} · ${v.width ? v.width + '×' + v.height : '?'} · ${fmtDur(v.duration)}</div>
           </div>
         </div>`;
     }).join('');
@@ -1039,7 +1042,7 @@
             return `
             <div class="enc-job-progress">
               <div class="progress-bar"><div class="${fillCls}" style="width:${isStarting ? 100 : pct}%"></div></div>
-              <div class="enc-job-pct">${labelText}</div>
+              <div class="enc-job-pct">${escHtml(labelText)}</div>
             </div>`;
           })() : ''}
           <div class="enc-job-actions">
@@ -1261,12 +1264,15 @@
   $('#encode-modal-close').addEventListener('click', () => { forceEncodeFlag = false; $('#encode-modal').style.display = 'none'; });
   $('#encode-modal-cancel').addEventListener('click', () => { forceEncodeFlag = false; $('#encode-modal').style.display = 'none'; });
   $('#encode-modal-submit').addEventListener('click', async () => {
+    const button = $('#encode-modal-submit');
+    if (button.disabled) return;
     const presetId = $('#encode-preset').value;
     const replaceOriginal = $('#encode-replace').checked;
     const container = $('#encode-container')?.value || 'auto';
     const downscale = $('#encode-downscale')?.value || '';
     const tonemap = $('#encode-tonemap')?.checked || false;
     if (!presetId) return toast(t('toast.select_preset'), 'warn');
+    button.disabled = true;
     try {
       const r = await api('/encode/enqueue', {
         method: 'POST',
@@ -1285,6 +1291,7 @@
       const body = $('#encode-panel-body');
       if (body) body.style.display = '';
     } catch (e) { toast(e.message, 'error'); }
+    finally { button.disabled = false; }
   });
 
   // Encode panel toggle

@@ -5,6 +5,7 @@
 
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const db = require('../db');
 
 const COOKIE_NAME = 'encodium_session';
 
@@ -12,6 +13,7 @@ let SECRET;
 if (process.env.JWT_SECRET) {
   SECRET = process.env.JWT_SECRET;
 } else {
+  if (process.env.NODE_ENV === 'production') throw new Error('JWT_SECRET is required in production');
   SECRET = crypto.randomBytes(64).toString('hex');
   console.warn('\n  ⚠️  JWT_SECRET not set — generated a random ephemeral secret.');
   console.warn('     All tokens will be invalidated on restart. Set JWT_SECRET in .env!\n');
@@ -72,15 +74,23 @@ function clearSessionCookie(req, res) {
 }
 
 /** Express middleware — sets req.user or 401 */
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const token = tokenFromRequest(req);
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   try {
     req.user = verifyToken(token);
-    next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
+  try {
+    const user = await db.getUserById(req.user.id);
+    if (!user) return res.status(401).json({ error: 'Invalid or expired token' });
+    // Roles and account deletion take effect without waiting seven days.
+    req.user = { ...req.user, id: user.id, email: user.email, role: user.role };
+  } catch {
+    return res.status(503).json({ error: 'Authentication temporarily unavailable' });
+  }
+  return next();
 }
 
 /** Requires admin role */

@@ -214,9 +214,9 @@ async function getAutoScanInterval() {
 
 async function setAutoScanInterval(minutes) {
   const key = String(minutes);
-  if (!(key in INTERVAL_OPTIONS)) throw new Error('Invalid interval');
+  if (!Object.hasOwn(INTERVAL_OPTIONS, key)) throw new Error('Invalid interval');
   await getDb().setSetting('autoscan_interval', key);
-  restartPeriodicTimer();
+  await restartPeriodicTimer();
 }
 
 async function restartPeriodicTimer() {

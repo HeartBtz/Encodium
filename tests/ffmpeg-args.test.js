@@ -91,5 +91,19 @@ test('CPU encoders remain independent from VA-API and CUDA arguments', () => {
   assert.equal(result.hwArgs, null);
   assert.equal(result.swArgs.includes('-vaapi_device'), false);
   assert.equal(result.swArgs.includes('-hwaccel'), false);
+  assert.equal(result.swArgs.includes('-spatial_aq'), false);
+  assert.equal(result.swArgs.includes('-aq-strength'), false);
   assert.equal(optionValue(result.swArgs, '-pix_fmt'), 'yuv420p');
+});
+
+test('CQ zero and H264 CPU fallback quality are preserved; all inputs restrict protocols', () => {
+  for (const preset of [{ type: 'cpu', encoder: 'libx264', codec: 'h264', cq: 0 }, { type: 'nvidia', encoder: 'hevc_nvenc', codec: 'h265', cq: 0 }]) {
+    const result = buildArgs(preset, '/fixture/quotes;$(no-shell).mp4', '/output.mp4', probe());
+    assert.equal(optionValue(result.swArgs, preset.type === 'cpu' ? '-crf' : '-cq'), '0');
+    for (const args of [result.swArgs, result.hwArgs].filter(Boolean)) {
+      assert.equal(optionValue(args, '-protocol_whitelist'), 'file,pipe');
+      assert.ok(args.indexOf('-protocol_whitelist') < args.indexOf('-i'));
+      assert.equal(optionValue(args, '-i'), '/fixture/quotes;$(no-shell).mp4');
+    }
+  }
 });

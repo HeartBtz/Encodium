@@ -2,6 +2,12 @@
 
 const dns = require('node:dns').promises;
 const net = require('node:net');
+const globalV6 = new net.BlockList();
+globalV6.addSubnet('2000::', 3, 'ipv6');
+const reservedV6 = new net.BlockList();
+for (const [address, prefix] of [['2001::', 23], ['2001:db8::', 32], ['2002::', 16], ['3fff::', 20]]) {
+  reservedV6.addSubnet(address, prefix, 'ipv6');
+}
 
 function isPrivateAddress(address) {
   if (!address || typeof address !== 'string') return true;
@@ -28,10 +34,9 @@ function isPrivateAddress(address) {
   }
 
   if (net.isIP(normalized) === 6) {
-    return normalized === '::' || normalized === '::1' ||
-      normalized.startsWith('fc') || normalized.startsWith('fd') ||
-      /^fe[89ab]/.test(normalized) || normalized.startsWith('ff') ||
-      normalized.startsWith('2001:db8:');
+    // Binary subnet checks also cover expanded IPv6 spellings and transition
+    // ranges (mapped IPv4, NAT64, 6to4), not just a textual ::1 prefix.
+    return !globalV6.check(normalized, 'ipv6') || reservedV6.check(normalized, 'ipv6');
   }
 
   return true;
