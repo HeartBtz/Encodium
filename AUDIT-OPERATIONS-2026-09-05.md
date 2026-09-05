@@ -1,6 +1,36 @@
 # Encodium : audit operations local du 2026-09-05
 
-## Complement operateur : production observee en lecture seule
+## Deploiement production verifie
+
+Le correctif a ete fusionne et deploye le 2026-09-05 apres succes du pipeline
+GitLab 358. Revision deployee sur les deux instances :
+`df75333bee887460743f18265f7310375bcc3656`. Le deploiement GitLab 134 est
+enregistre en succes dans l'environnement `production`.
+
+- Sauvegarde froide : `/var/backups/encodium/20260905T151025Z-20247`, mode
+  0700 root:root. Elle contient les deux anciennes applications, les deux
+  configurations, les deux unites systemd et un dump commun des bases. Les
+  repertoires `data` existants n'ont pas ete remplaces.
+- Aucun job queued/running/probing/encoding et aucun processus FFmpeg n'etait
+  actif avant l'arret coordonne des deux services.
+- Runtime dedie installe et controle par checksum : Node 24.20.0 sous
+  `/usr/local/lib/encodium-node`. Les deux unites l'utilisent.
+- Chaque instance a `COOKIE_SECURE=true`, `TRUST_PROXY=192.168.1.100` et son
+  unique origine HTTPS dans `CORS_ORIGINS`. Aucun secret n'est consigne ici.
+- `encodium.service` et `encodiumPlex.service` sont actifs avec `NRestarts=0`.
+  Healthcheck local et session signee ephemere : `/api/auth/me` retourne 200 ;
+  un login mal forme de meme origine retourne 400 ; une origine etrangere est
+  refusee avec 403 sur les deux instances.
+- Les quatre controles publics anonymes, dont les deux domaines Encodium,
+  redirigent avec 302 vers `pangolin.hbtz.fr`. Aucune session SSO n'a ete
+  contournee ou simulee.
+
+Point de rollback : la sauvegarde ci-dessus et la revision precedente de chaque
+application. Un rollback de donnees exige un nouvel arret coordonne et une revue
+des changements survenus depuis le deploiement ; il ne doit pas ecraser les
+repertoires `data` par defaut.
+
+## Etat avant deploiement : photographie historique
 
 Cette verification complete les limites du sous-audit local ci-dessous ; ce
 n'est pas un deploiement des corrections.
